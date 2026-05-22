@@ -1,0 +1,59 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Remove missing app icon references for CI
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = 'app.json';
+          const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+          delete data.expo.icon;
+          delete data.expo.splash;
+          if (data.expo.android) delete data.expo.android.adaptiveIcon;
+          fs.writeFileSync(path, JSON.stringify(data, null, 2));
+          NODE
+
+      - name: Prebuild Android project
+        run: npx expo prebuild --platform android --clean --non-interactive
+
+      - name: Build debug APK
+        run: |
+          cd android
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StrikeVision-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
