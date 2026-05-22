@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "StrikeVision",
+    "slug": "strikevision",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "strikevision",
+    "userInterfaceStyle": "dark",
+    "platforms": ["android", "ios"],
+    "icon": "./src/assets/images/icon.png",
+    "splash": {
+      "image": "./src/assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0A"
+    },
+    "android": {
+      "package": "com.strikevision.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./src/assets/images/adaptive-icon.png",
+        "backgroundColor": "#0A0A0A"
+      },
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.strikevision.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "StrikeVision uses the camera to analyze your strikes and workouts.",
+        "NSMicrophoneUsageDescription": "StrikeVision uses audio during guided workout sessions."
+      }
+    },
+    "plugins": [
+      "expo-camera",
+      "expo-av",
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
