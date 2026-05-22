@@ -28,6 +28,39 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Align Expo packages for CI
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.dependencies = {
+            'expo': '~51.0.39',
+            'expo-av': '~14.0.7',
+            'expo-camera': '~15.0.16',
+            'expo-router': '~3.5.24',
+            'expo-status-bar': '~1.12.1',
+            'expo-secure-store': '~13.0.2',
+            'expo-haptics': '~13.0.1',
+            'expo-linear-gradient': '~13.0.2',
+            'react': '18.2.0',
+            'react-native': '0.74.5',
+            '@react-navigation/native': '^6.1.18',
+            'react-native-safe-area-context': '4.10.5',
+            'react-native-screens': '3.31.1',
+            'react-native-reanimated': '~3.10.1',
+            'react-native-gesture-handler': '~2.16.1',
+            'zustand': '^4.5.4',
+            'date-fns': '^3.6.0'
+          };
+          pkg.devDependencies = {
+            '@babel/core': '^7.24.0',
+            '@types/react': '~18.2.79',
+            'typescript': '~5.3.3'
+          };
+          delete pkg.devDependencies['@types/react-native'];
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          NODE
+
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
@@ -35,12 +68,11 @@ jobs:
         run: |
           node - <<'NODE'
           const fs = require('fs');
-          const path = 'app.json';
-          const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const data = JSON.parse(fs.readFileSync('app.json', 'utf8'));
           delete data.expo.icon;
           delete data.expo.splash;
           if (data.expo.android) delete data.expo.android.adaptiveIcon;
-          fs.writeFileSync(path, JSON.stringify(data, null, 2));
+          fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
           NODE
 
       - name: Prebuild Android project
