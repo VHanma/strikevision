@@ -57,7 +57,6 @@ jobs:
             '@types/react': '~18.2.79',
             'typescript': '~5.3.3'
           };
-          delete pkg.devDependencies['@types/react-native'];
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
           NODE
 
@@ -78,14 +77,25 @@ jobs:
       - name: Prebuild Android project
         run: npx expo prebuild --platform android --clean --non-interactive
 
-      - name: Build debug APK
+      - name: Make release APK installable with debug signing
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const file = 'android/app/build.gradle';
+          let s = fs.readFileSync(file, 'utf8');
+          s = s.replace(/release \{\n\s+\/\/ Caution! In production, you need to generate your own keystore file\.\n\s+\/\/ see https:\/\/reactnative\.dev\/docs\/signed-apk-android\.\n\s+signingConfig signingConfigs\.debug/g, 'release {\n            signingConfig signingConfigs.debug');
+          s = s.replace(/release \{\n\s+signingConfig signingConfigs\.debug/g, 'release {\n            signingConfig signingConfigs.debug');
+          fs.writeFileSync(file, s);
+          NODE
+
+      - name: Build release APK with bundled JavaScript
         run: |
           cd android
           chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
 
-      - name: Upload APK artifact
+      - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: StrikeVision-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: StrikeVision-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
