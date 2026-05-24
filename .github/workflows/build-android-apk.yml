@@ -24,6 +24,10 @@ jobs:
 
       - name: Patch Pose Core Gradle config
         run: |
+          cat > native-apk/gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.suppressUnsupportedCompileSdk=35
+          EOF
           cat > native-apk/app/build.gradle <<'EOF'
           plugins { id 'com.android.application' }
           android {
