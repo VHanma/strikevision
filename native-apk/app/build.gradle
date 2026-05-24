@@ -1,0 +1,16 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.strikevision.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.strikevision.app'
+        minSdk 23
+        targetSdk 35
+        versionCode 5
+        versionName '1.1-round-tracker'
+    }
+}
