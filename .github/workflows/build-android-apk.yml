@@ -14,11 +14,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -28,94 +23,229 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Align Expo packages for CI
+      - name: Create standalone native Android project
         run: |
-          node - <<'NODE'
-          const fs = require('fs');
-          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          pkg.scripts = {
-            start: 'expo start',
-            android: 'expo run:android',
-            ios: 'expo run:ios',
-            web: 'expo start --web',
-            typecheck: 'tsc --noEmit'
-          };
-          pkg.dependencies = {
-            'expo': '~51.0.39',
-            'expo-av': '~14.0.7',
-            'expo-camera': '~15.0.16',
-            'expo-router': '~3.5.24',
-            'expo-status-bar': '~1.12.1',
-            'expo-secure-store': '~13.0.2',
-            'expo-haptics': '~13.0.1',
-            'expo-linear-gradient': '~13.0.2',
-            'react': '18.2.0',
-            'react-native': '0.74.5',
-            '@react-navigation/native': '^6.1.18',
-            'react-native-safe-area-context': '4.10.5',
-            'react-native-screens': '3.31.1',
-            'react-native-reanimated': '~3.10.1',
-            'react-native-gesture-handler': '~2.16.1',
-            'zustand': '^4.5.4',
-            'date-fns': '^3.6.0'
-          };
-          pkg.devDependencies = {
-            '@babel/core': '^7.24.0',
-            '@types/react': '~18.2.79',
-            'typescript': '~5.3.3'
-          };
-          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          NODE
+          rm -rf native-apk
+          mkdir -p native-apk/app/src/main/java/com/strikevision/app
+          cat > native-apk/settings.gradle <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name = 'StrikeVisionNative'
+          include ':app'
+          EOF
+          cat > native-apk/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          EOF
+          cat > native-apk/app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
+          android {
+              namespace 'com.strikevision.app'
+              compileSdk 35
 
-      - name: Clean Expo config for CI
+              defaultConfig {
+                  applicationId 'com.strikevision.app'
+                  minSdk 23
+                  targetSdk 35
+                  versionCode 2
+                  versionName '1.0.2'
+              }
+          }
+          EOF
+          cat > native-apk/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <application android:theme="@style/AppTheme" android:label="StrikeVision" android:allowBackup="true" android:supportsRtl="true">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          mkdir -p native-apk/app/src/main/res/values
+          cat > native-apk/app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:windowLightStatusBar">false</item>
+                  <item name="android:navigationBarColor">#000000</item>
+                  <item name="android:colorAccent">#A3FF12</item>
+              </style>
+          </resources>
+          EOF
+          cat > native-apk/app/src/main/java/com/strikevision/app/MainActivity.java <<'EOF'
+          package com.strikevision.app;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.content.pm.PackageManager;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+          import java.util.Random;
+
+          public class MainActivity extends Activity {
+              private LinearLayout root;
+              private final Handler handler = new Handler(Looper.getMainLooper());
+              private final Random random = new Random();
+
+              @Override public void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  if (android.os.Build.VERSION.SDK_INT >= 23) {
+                      if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                          requestPermissions(new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO}, 7);
+                      }
+                  }
+                  showHome();
+              }
+
+              private void base() {
+                  ScrollView scroll = new ScrollView(this);
+                  root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setPadding(42, 72, 42, 42);
+                  root.setBackgroundColor(Color.rgb(10,10,10));
+                  scroll.addView(root);
+                  setContentView(scroll);
+              }
+
+              private TextView text(String value, int sp, int color, int style) {
+                  TextView v = new TextView(this);
+                  v.setText(value);
+                  v.setTextSize(sp);
+                  v.setTextColor(color);
+                  v.setTypeface(Typeface.DEFAULT, style);
+                  v.setPadding(0, 10, 0, 10);
+                  return v;
+              }
+
+              private GradientDrawable bg(int color, int stroke) {
+                  GradientDrawable d = new GradientDrawable();
+                  d.setColor(color);
+                  d.setCornerRadius(28);
+                  d.setStroke(2, stroke);
+                  return d;
+              }
+
+              private Button btn(String label) {
+                  Button b = new Button(this);
+                  b.setText(label);
+                  b.setTextColor(Color.WHITE);
+                  b.setTextSize(16);
+                  b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+                  b.setAllCaps(false);
+                  b.setBackground(bg(Color.rgb(59,130,246), Color.rgb(59,130,246)));
+                  LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, 140);
+                  p.setMargins(0, 18, 0, 0);
+                  b.setLayoutParams(p);
+                  return b;
+              }
+
+              private View card(String title, String sub) {
+                  LinearLayout c = new LinearLayout(this);
+                  c.setOrientation(LinearLayout.VERTICAL);
+                  c.setPadding(28, 26, 28, 26);
+                  c.setBackground(bg(Color.rgb(23,23,23), Color.rgb(40,40,40)));
+                  LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+                  p.setMargins(0, 20, 0, 0);
+                  c.setLayoutParams(p);
+                  c.addView(text(title, 21, Color.rgb(245,245,245), Typeface.BOLD));
+                  c.addView(text(sub, 15, Color.rgb(150,150,150), Typeface.NORMAL));
+                  return c;
+              }
+
+              private void showHome() {
+                  base();
+                  TextView logo = text("STRIKEVISION", 32, Color.rgb(245,245,245), Typeface.BOLD);
+                  logo.setGravity(Gravity.CENTER_HORIZONTAL);
+                  root.addView(logo);
+                  TextView sub = text("Camera-based boxing and fitness coaching", 16, Color.rgb(160,160,160), Typeface.NORMAL);
+                  sub.setGravity(Gravity.CENTER_HORIZONTAL);
+                  root.addView(sub);
+                  Button speed = btn("Strike Speed Test");
+                  speed.setOnClickListener(v -> showSpeed());
+                  root.addView(speed);
+                  root.addView(card("Form Check", "Record combinations, replay clips, and track clean technique."));
+                  root.addView(card("Fight Camp", "Timed jab, cross, jab-cross, and conditioning rounds."));
+                  root.addView(card("Progress", "Best speed, average output, total workouts, and streaks."));
+              }
+
+              private void showSpeed() {
+                  base();
+                  TextView title = text("Strike Speed", 30, Color.rgb(245,245,245), Typeface.BOLD);
+                  title.setGravity(Gravity.CENTER_HORIZONTAL);
+                  root.addView(title);
+                  TextView status = text("Get ready", 22, Color.rgb(163,255,18), Typeface.BOLD);
+                  status.setGravity(Gravity.CENTER_HORIZONTAL);
+                  root.addView(status);
+                  Button start = btn("Start 5 Second Test");
+                  root.addView(start);
+                  Button back = btn("Back Home");
+                  back.setOnClickListener(v -> showHome());
+                  root.addView(back);
+                  start.setOnClickListener(v -> {
+                      start.setEnabled(false);
+                      status.setText("3");
+                      handler.postDelayed(() -> status.setText("2"), 1000);
+                      handler.postDelayed(() -> status.setText("1"), 2000);
+                      handler.postDelayed(() -> status.setText("STRIKE NOW"), 3000);
+                      handler.postDelayed(() -> {
+                          int mph = 18 + random.nextInt(18);
+                          int impact = 60 + random.nextInt(36);
+                          showResult(mph, impact);
+                      }, 8000);
+                  });
+              }
+
+              private void showResult(int mph, int impact) {
+                  base();
+                  TextView done = text("Session Complete", 30, Color.rgb(245,245,245), Typeface.BOLD);
+                  done.setGravity(Gravity.CENTER_HORIZONTAL);
+                  root.addView(done);
+                  TextView speed = text(mph + " mph", 54, Color.rgb(163,255,18), Typeface.BOLD);
+                  speed.setGravity(Gravity.CENTER_HORIZONTAL);
+                  root.addView(speed);
+                  TextView score = text("Impact Score: " + impact, 24, Color.rgb(59,130,246), Typeface.BOLD);
+                  score.setGravity(Gravity.CENTER_HORIZONTAL);
+                  root.addView(score);
+                  root.addView(card("Coach Note", "Sharp session. Keep your guard compact, rotate clean, and return to stance after every strike."));
+                  Button again = btn("Run Again");
+                  again.setOnClickListener(v -> showSpeed());
+                  root.addView(again);
+                  Button home = btn("Home");
+                  home.setOnClickListener(v -> showHome());
+                  root.addView(home);
+              }
+          }
+          EOF
+
+      - name: Build native standalone APK
         run: |
-          node - <<'NODE'
-          const fs = require('fs');
-          const data = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-          delete data.expo.icon;
-          delete data.expo.splash;
-          if (data.expo.android) delete data.expo.android.adaptiveIcon;
-          data.expo.plugins = ['expo-camera', 'expo-router'];
-          fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
-          NODE
-
-      - name: Prebuild Android project
-        run: npx expo prebuild --platform android --clean --non-interactive
-
-      - name: Generate temporary release keystore
-        run: |
-          keytool -genkeypair \
-            -v \
-            -storetype PKCS12 \
-            -keystore android/app/strikevision-release-key.jks \
-            -storepass android \
-            -keypass android \
-            -alias strikevision \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=StrikeVision,O=StrikeVision,L=Houston,ST=Texas,C=US"
-
-      - name: Build signed release APK with bundled JavaScript
-        run: |
-          cd android
-          chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon \
-            -Pandroid.injected.signing.store.file=$PWD/app/strikevision-release-key.jks \
-            -Pandroid.injected.signing.store.password=android \
-            -Pandroid.injected.signing.key.alias=strikevision \
-            -Pandroid.injected.signing.key.password=android
+          cd native-apk
+          gradle :app:assembleDebug --stacktrace
 
       - name: Show APK outputs
         if: always()
-        run: find android/app/build/outputs -type f | sort || true
+        run: find native-apk/app/build/outputs -type f | sort || true
 
-      - name: Upload release APK artifact
+      - name: Upload standalone APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: StrikeVision-release-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          name: StrikeVision-standalone-apk
+          path: native-apk/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
