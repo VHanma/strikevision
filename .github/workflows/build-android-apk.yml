@@ -33,6 +33,13 @@ jobs:
           node - <<'NODE'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.scripts = {
+            start: 'expo start',
+            android: 'expo run:android',
+            ios: 'expo run:ios',
+            web: 'expo start --web',
+            typecheck: 'tsc --noEmit'
+          };
           pkg.dependencies = {
             'expo': '~51.0.39',
             'expo-av': '~14.0.7',
@@ -63,7 +70,7 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Remove missing app icon references for CI
+      - name: Clean Expo config for CI
         run: |
           node - <<'NODE'
           const fs = require('fs');
@@ -71,31 +78,44 @@ jobs:
           delete data.expo.icon;
           delete data.expo.splash;
           if (data.expo.android) delete data.expo.android.adaptiveIcon;
+          data.expo.plugins = ['expo-camera', 'expo-router'];
           fs.writeFileSync('app.json', JSON.stringify(data, null, 2));
           NODE
 
       - name: Prebuild Android project
         run: npx expo prebuild --platform android --clean --non-interactive
 
-      - name: Make release APK installable with debug signing
+      - name: Generate temporary release keystore
         run: |
-          node - <<'NODE'
-          const fs = require('fs');
-          const file = 'android/app/build.gradle';
-          let s = fs.readFileSync(file, 'utf8');
-          s = s.replace(/release \{\n\s+\/\/ Caution! In production, you need to generate your own keystore file\.\n\s+\/\/ see https:\/\/reactnative\.dev\/docs\/signed-apk-android\.\n\s+signingConfig signingConfigs\.debug/g, 'release {\n            signingConfig signingConfigs.debug');
-          s = s.replace(/release \{\n\s+signingConfig signingConfigs\.debug/g, 'release {\n            signingConfig signingConfigs.debug');
-          fs.writeFileSync(file, s);
-          NODE
+          keytool -genkeypair \
+            -v \
+            -storetype PKCS12 \
+            -keystore android/app/strikevision-release-key.jks \
+            -storepass android \
+            -keypass android \
+            -alias strikevision \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=StrikeVision,O=StrikeVision,L=Houston,ST=Texas,C=US"
 
-      - name: Build release APK with bundled JavaScript
+      - name: Build signed release APK with bundled JavaScript
         run: |
           cd android
           chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file=$PWD/app/strikevision-release-key.jks \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=strikevision \
+            -Pandroid.injected.signing.key.password=android
+
+      - name: Show APK outputs
+        if: always()
+        run: find android/app/build/outputs -type f | sort || true
 
       - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: StrikeVision-release-apk
           path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
