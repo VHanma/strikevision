@@ -23,7 +23,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Create native camera Android project
+      - name: Create dependency-free native camera project
         run: |
           rm -rf native-apk
           mkdir -p native-apk/app/src/main/java/com/strikevision/app
@@ -48,29 +48,19 @@ jobs:
           android {
               namespace 'com.strikevision.app'
               compileSdk 35
-
               defaultConfig {
                   applicationId 'com.strikevision.app'
                   minSdk 23
                   targetSdk 35
-                  versionCode 3
-                  versionName '1.0.3-camera'
+                  versionCode 4
+                  versionName '1.0.4-real-camera'
               }
-          }
-
-          dependencies {
-              implementation 'androidx.activity:activity:1.9.3'
-              implementation 'androidx.camera:camera-core:1.3.4'
-              implementation 'androidx.camera:camera-camera2:1.3.4'
-              implementation 'androidx.camera:camera-lifecycle:1.3.4'
-              implementation 'androidx.camera:camera-view:1.3.4'
           }
           EOF
 
           cat > native-apk/app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.CAMERA" />
-              <uses-permission android:name="android.permission.RECORD_AUDIO" />
               <uses-feature android:name="android.hardware.camera" android:required="false" />
               <application android:theme="@style/AppTheme" android:label="StrikeVision" android:allowBackup="true" android:supportsRtl="true">
                   <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
@@ -88,7 +78,6 @@ jobs:
               <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
                   <item name="android:fontFamily">sans</item>
                   <item name="android:windowLightStatusBar">false</item>
-                  <item name="android:windowActionModeOverlay">true</item>
                   <item name="android:navigationBarColor">#000000</item>
                   <item name="android:colorAccent">#A3FF12</item>
               </style>
@@ -99,106 +88,76 @@ jobs:
           package com.strikevision.app;
 
           import android.Manifest;
+          import android.app.Activity;
           import android.content.pm.PackageManager;
           import android.graphics.Color;
           import android.graphics.Typeface;
           import android.graphics.drawable.GradientDrawable;
+          import android.hardware.Camera;
           import android.os.Bundle;
           import android.os.Handler;
           import android.os.Looper;
           import android.view.Gravity;
+          import android.view.SurfaceHolder;
+          import android.view.SurfaceView;
           import android.view.View;
           import android.widget.Button;
           import android.widget.FrameLayout;
           import android.widget.LinearLayout;
           import android.widget.TextView;
+          import java.util.List;
 
-          import androidx.activity.ComponentActivity;
-          import androidx.activity.result.ActivityResultLauncher;
-          import androidx.activity.result.contract.ActivityResultContracts;
-          import androidx.annotation.NonNull;
-          import androidx.camera.core.CameraSelector;
-          import androidx.camera.core.ImageAnalysis;
-          import androidx.camera.core.ImageProxy;
-          import androidx.camera.core.Preview;
-          import androidx.camera.lifecycle.ProcessCameraProvider;
-          import androidx.camera.view.PreviewView;
-          import androidx.core.content.ContextCompat;
-
-          import com.google.common.util.concurrent.ListenableFuture;
-
-          import java.nio.ByteBuffer;
-          import java.util.concurrent.ExecutorService;
-          import java.util.concurrent.Executors;
-
-          public class MainActivity extends ComponentActivity {
+          @SuppressWarnings("deprecation")
+          public class MainActivity extends Activity implements SurfaceHolder.Callback, Camera.PreviewCallback {
               private FrameLayout frame;
-              private PreviewView previewView;
+              private SurfaceView surface;
               private LinearLayout overlay;
               private TextView status;
               private TextView liveMeter;
-              private Button startButton;
-              private Button homeButton;
+              private Button startBtn;
+              private Camera camera;
+              private int cameraId = -1;
+              private int previewWidth = 0;
+              private int previewHeight = 0;
+              private byte[] previous = null;
+              private double currentMotion = 0;
+              private double peakMotion = 0;
+              private double sumMotion = 0;
+              private int motionFrames = 0;
+              private boolean testActive = false;
+              private long activeStart = 0;
               private final Handler handler = new Handler(Looper.getMainLooper());
-              private ExecutorService cameraExecutor;
-              private byte[] previousLuma = null;
-              private volatile double currentMotion = 0.0;
-              private volatile double peakMotion = 0.0;
-              private volatile double sumMotion = 0.0;
-              private volatile int motionFrames = 0;
-              private volatile boolean testActive = false;
-              private long activeStartMs = 0L;
-
-              private final ActivityResultLauncher<String> requestCamera = registerForActivityResult(
-                  new ActivityResultContracts.RequestPermission(), granted -> {
-                      if (granted) showCameraHome(); else showPermissionScreen();
-                  }
-              );
 
               @Override public void onCreate(Bundle b) {
                   super.onCreate(b);
-                  cameraExecutor = Executors.newSingleThreadExecutor();
-                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                      showCameraHome();
+                  if (android.os.Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(new String[]{Manifest.permission.CAMERA}, 10);
                   } else {
-                      showPermissionScreen();
+                      showCamera();
                   }
               }
 
-              @Override protected void onDestroy() {
-                  super.onDestroy();
-                  if (cameraExecutor != null) cameraExecutor.shutdown();
+              @Override public void onRequestPermissionsResult(int r, String[] p, int[] g) {
+                  super.onRequestPermissionsResult(r, p, g);
+                  showCamera();
               }
 
-              private void showPermissionScreen() {
-                  LinearLayout root = new LinearLayout(this);
-                  root.setOrientation(LinearLayout.VERTICAL);
-                  root.setGravity(Gravity.CENTER);
-                  root.setPadding(42, 42, 42, 42);
-                  root.setBackgroundColor(Color.rgb(10, 10, 10));
-                  TextView title = text("STRIKEVISION", 32, Color.rgb(245,245,245), Typeface.BOLD);
-                  title.setGravity(Gravity.CENTER);
-                  root.addView(title);
-                  TextView sub = text("Camera permission is required for real strike tracking.", 17, Color.rgb(160,160,160), Typeface.NORMAL);
-                  sub.setGravity(Gravity.CENTER);
-                  root.addView(sub);
-                  Button grant = btn("Grant Camera Permission");
-                  grant.setOnClickListener(v -> requestCamera.launch(Manifest.permission.CAMERA));
-                  root.addView(grant);
-                  setContentView(root);
+              @Override protected void onPause() {
+                  super.onPause();
+                  stopCamera();
               }
 
-              private void showCameraHome() {
+              private void showCamera() {
                   frame = new FrameLayout(this);
                   frame.setBackgroundColor(Color.BLACK);
-                  previewView = new PreviewView(this);
-                  previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
-                  frame.addView(previewView, new FrameLayout.LayoutParams(-1, -1));
+                  surface = new SurfaceView(this);
+                  surface.getHolder().addCallback(this);
+                  frame.addView(surface, new FrameLayout.LayoutParams(-1, -1));
 
                   overlay = new LinearLayout(this);
                   overlay.setOrientation(LinearLayout.VERTICAL);
                   overlay.setPadding(34, 64, 34, 42);
-                  overlay.setBackgroundColor(Color.argb(95, 0, 0, 0));
+                  overlay.setBackgroundColor(Color.argb(85, 0, 0, 0));
                   frame.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
                   setContentView(frame);
 
@@ -206,7 +165,7 @@ jobs:
                   logo.setGravity(Gravity.CENTER_HORIZONTAL);
                   overlay.addView(logo);
 
-                  status = text("Camera live. Stand in frame.", 18, Color.rgb(163,255,18), Typeface.BOLD);
+                  status = text("Camera live. Hold still to test zero scoring.", 17, Color.rgb(163,255,18), Typeface.BOLD);
                   status.setGravity(Gravity.CENTER_HORIZONTAL);
                   overlay.addView(status);
 
@@ -217,121 +176,121 @@ jobs:
                   View spacer = new View(this);
                   overlay.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
 
-                  startButton = btn("Start Real Camera Test");
-                  startButton.setOnClickListener(v -> startTest());
-                  overlay.addView(startButton);
+                  startBtn = btn("Start Real Camera Test");
+                  startBtn.setOnClickListener(v -> startTest());
+                  overlay.addView(startBtn);
 
-                  homeButton = btn("Reset Camera");
-                  homeButton.setOnClickListener(v -> showCameraHome());
-                  overlay.addView(homeButton);
+                  Button reset = btn("Restart Camera");
+                  reset.setOnClickListener(v -> { stopCamera(); showCamera(); });
+                  overlay.addView(reset);
 
-                  startCamera();
                   startUiLoop();
               }
 
-              private void startCamera() {
-                  ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(this);
-                  future.addListener(() -> {
-                      try {
-                          ProcessCameraProvider provider = future.get();
-                          Preview preview = new Preview.Builder().build();
-                          preview.setSurfaceProvider(previewView.getSurfaceProvider());
-
-                          ImageAnalysis analysis = new ImageAnalysis.Builder()
-                              .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                              .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
-                              .build();
-                          analysis.setAnalyzer(cameraExecutor, this::analyzeMotion);
-
-                          CameraSelector selector = CameraSelector.DEFAULT_FRONT_CAMERA;
-                          provider.unbindAll();
-                          provider.bindToLifecycle(this, selector, preview, analysis);
-                      } catch (Exception frontError) {
-                          try {
-                              ProcessCameraProvider provider = future.get();
-                              Preview preview = new Preview.Builder().build();
-                              preview.setSurfaceProvider(previewView.getSurfaceProvider());
-                              ImageAnalysis analysis = new ImageAnalysis.Builder()
-                                  .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                  .build();
-                              analysis.setAnalyzer(cameraExecutor, this::analyzeMotion);
-                              provider.unbindAll();
-                              provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis);
-                          } catch (Exception backError) {
-                              handler.post(() -> status.setText("Camera failed to start."));
-                          }
-                      }
-                  }, ContextCompat.getMainExecutor(this));
-              }
-
-              private void analyzeMotion(@NonNull ImageProxy image) {
+              private void startCamera(SurfaceHolder holder) {
                   try {
-                      ImageProxy.PlaneProxy plane = image.getPlanes()[0];
-                      ByteBuffer buffer = plane.getBuffer();
-                      int width = image.getWidth();
-                      int height = image.getHeight();
-                      int rowStride = plane.getRowStride();
-                      int sampleW = 40;
-                      int sampleH = 30;
-                      byte[] now = new byte[sampleW * sampleH];
-                      int idx = 0;
-                      for (int y = 0; y < sampleH; y++) {
-                          int srcY = y * height / sampleH;
-                          for (int x = 0; x < sampleW; x++) {
-                              int srcX = x * width / sampleW;
-                              int pos = srcY * rowStride + srcX;
-                              now[idx++] = buffer.get(pos);
-                          }
+                      cameraId = findFrontCamera();
+                      if (cameraId < 0) cameraId = 0;
+                      camera = Camera.open(cameraId);
+                      Camera.Parameters params = camera.getParameters();
+                      Camera.Size chosen = chooseSize(params.getSupportedPreviewSizes());
+                      if (chosen != null) {
+                          params.setPreviewSize(chosen.width, chosen.height);
+                          previewWidth = chosen.width;
+                          previewHeight = chosen.height;
                       }
-
-                      if (previousLuma != null) {
-                          long diff = 0;
-                          for (int i = 0; i < now.length; i++) {
-                              int a = now[i] & 0xff;
-                              int b = previousLuma[i] & 0xff;
-                              diff += Math.abs(a - b);
-                          }
-                          double motion = diff / (double) now.length;
-                          currentMotion = motion;
-                          if (testActive) {
-                              long age = System.currentTimeMillis() - activeStartMs;
-                              if (age > 400) {
-                                  peakMotion = Math.max(peakMotion, motion);
-                                  sumMotion += motion;
-                                  motionFrames++;
-                              }
-                          }
-                      }
-                      previousLuma = now;
-                  } catch (Throwable ignored) {
-                  } finally {
-                      image.close();
+                      camera.setParameters(params);
+                      camera.setDisplayOrientation(90);
+                      camera.setPreviewDisplay(holder);
+                      camera.setPreviewCallback(this);
+                      camera.startPreview();
+                      status.setText("Camera live. Motion meter is real.");
+                  } catch (Exception e) {
+                      status.setText("Camera start failed: " + e.getClass().getSimpleName());
                   }
               }
 
-              private void startUiLoop() {
-                  handler.postDelayed(new Runnable() {
-                      @Override public void run() {
-                          if (liveMeter != null) liveMeter.setText("Motion: " + Math.round(currentMotion));
-                          handler.postDelayed(this, 250);
+              private int findFrontCamera() {
+                  int count = Camera.getNumberOfCameras();
+                  Camera.CameraInfo info = new Camera.CameraInfo();
+                  for (int i = 0; i < count; i++) {
+                      Camera.getCameraInfo(i, info);
+                      if (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) return i;
+                  }
+                  return -1;
+              }
+
+              private Camera.Size chooseSize(List<Camera.Size> sizes) {
+                  if (sizes == null || sizes.isEmpty()) return null;
+                  Camera.Size best = sizes.get(0);
+                  for (Camera.Size s : sizes) {
+                      int pixels = s.width * s.height;
+                      if (pixels >= 300000 && pixels <= 1000000) return s;
+                      if (pixels < best.width * best.height) best = s;
+                  }
+                  return best;
+              }
+
+              private void stopCamera() {
+                  try {
+                      if (camera != null) {
+                          camera.setPreviewCallback(null);
+                          camera.stopPreview();
+                          camera.release();
+                          camera = null;
                       }
-                  }, 250);
+                  } catch (Exception ignored) {}
+              }
+
+              @Override public void surfaceCreated(SurfaceHolder h) { startCamera(h); }
+              @Override public void surfaceChanged(SurfaceHolder h, int f, int w, int he) {}
+              @Override public void surfaceDestroyed(SurfaceHolder h) { stopCamera(); }
+
+              @Override public void onPreviewFrame(byte[] data, Camera cam) {
+                  if (previewWidth <= 0 || previewHeight <= 0) return;
+                  int sw = 36;
+                  int sh = 28;
+                  byte[] now = new byte[sw * sh];
+                  int idx = 0;
+                  for (int y = 0; y < sh; y++) {
+                      int yy = y * previewHeight / sh;
+                      int row = yy * previewWidth;
+                      for (int x = 0; x < sw; x++) {
+                          int xx = x * previewWidth / sw;
+                          now[idx++] = data[row + xx];
+                      }
+                  }
+                  if (previous != null) {
+                      long diff = 0;
+                      for (int i = 0; i < now.length; i++) {
+                          diff += Math.abs((now[i] & 255) - (previous[i] & 255));
+                      }
+                      double motion = diff / (double) now.length;
+                      currentMotion = motion;
+                      if (testActive && System.currentTimeMillis() - activeStart > 450) {
+                          peakMotion = Math.max(peakMotion, motion);
+                          sumMotion += motion;
+                          motionFrames++;
+                      }
+                  }
+                  previous = now;
               }
 
               private void startTest() {
-                  startButton.setEnabled(false);
-                  previousLuma = null;
-                  currentMotion = 0.0;
-                  peakMotion = 0.0;
-                  sumMotion = 0.0;
+                  if (startBtn != null) startBtn.setEnabled(false);
+                  previous = null;
+                  currentMotion = 0;
+                  peakMotion = 0;
+                  sumMotion = 0;
                   motionFrames = 0;
+                  testActive = false;
                   status.setText("3");
                   handler.postDelayed(() -> status.setText("2"), 1000);
                   handler.postDelayed(() -> status.setText("1"), 2000);
                   handler.postDelayed(() -> {
-                      status.setText("STRIKE NOW");
-                      activeStartMs = System.currentTimeMillis();
+                      activeStart = System.currentTimeMillis();
                       testActive = true;
+                      status.setText("STRIKE NOW");
                   }, 3000);
                   handler.postDelayed(() -> {
                       testActive = false;
@@ -340,20 +299,15 @@ jobs:
               }
 
               private void showResult() {
-                  double avg = motionFrames > 0 ? sumMotion / motionFrames : 0.0;
-                  int motionScore = (int) Math.round(Math.min(100, peakMotion * 3.2 + avg * 1.1));
-                  int mph = motionScore < 8 ? 0 : Math.max(4, (int) Math.round(motionScore * 0.42));
-                  int impact = motionScore < 8 ? 0 : Math.min(100, (int) Math.round(motionScore * 1.15));
+                  double avg = motionFrames > 0 ? sumMotion / motionFrames : 0;
+                  int score = (int)Math.round(Math.min(100, peakMotion * 3.0 + avg));
+                  int mph = score < 8 ? 0 : Math.max(4, (int)Math.round(score * 0.43));
+                  int impact = score < 8 ? 0 : Math.min(100, (int)Math.round(score * 1.12));
                   String note;
-                  if (motionScore < 8) {
-                      note = "No clean strike detected. The camera saw almost no motion, so this round gets no score.";
-                  } else if (motionScore < 28) {
-                      note = "Light motion detected. Step back, keep your fist visible to the camera, and throw through the center line.";
-                  } else if (motionScore < 62) {
-                      note = "Solid movement detected. Keep the shoulder relaxed, snap the strike, then return to stance.";
-                  } else {
-                      note = "Fast burst detected. Nice acceleration. Keep the guard compact and recover clean after impact.";
-                  }
+                  if (score < 8) note = "No clean strike detected. Holding still now produces a true zero score.";
+                  else if (score < 30) note = "Light motion detected. Keep your hand visible and punch through the center of the camera.";
+                  else if (score < 65) note = "Solid strike motion detected. Snap out, recoil fast, and return to stance.";
+                  else note = "Fast burst detected. Strong acceleration. Keep the guard compact after the strike.";
 
                   overlay.removeAllViews();
                   TextView done = text("Session Complete", 30, Color.rgb(245,245,245), Typeface.BOLD);
@@ -362,36 +316,37 @@ jobs:
                   TextView speed = text(mph + " mph", 56, Color.rgb(163,255,18), Typeface.BOLD);
                   speed.setGravity(Gravity.CENTER_HORIZONTAL);
                   overlay.addView(speed);
-                  TextView score = text("Impact Score: " + impact, 23, Color.rgb(59,130,246), Typeface.BOLD);
-                  score.setGravity(Gravity.CENTER_HORIZONTAL);
-                  overlay.addView(score);
-                  TextView raw = text("Peak camera motion: " + Math.round(peakMotion) + " | Avg: " + Math.round(avg), 14, Color.rgb(180,180,180), Typeface.BOLD);
+                  TextView impactView = text("Impact Score: " + impact, 23, Color.rgb(59,130,246), Typeface.BOLD);
+                  impactView.setGravity(Gravity.CENTER_HORIZONTAL);
+                  overlay.addView(impactView);
+                  TextView raw = text("Peak motion: " + Math.round(peakMotion) + " | Avg: " + Math.round(avg), 14, Color.rgb(180,180,180), Typeface.BOLD);
                   raw.setGravity(Gravity.CENTER_HORIZONTAL);
                   overlay.addView(raw);
                   overlay.addView(card("Coach Note", note));
                   View spacer = new View(this);
                   overlay.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
                   Button again = btn("Run Again");
-                  again.setOnClickListener(v -> showCameraHome());
+                  again.setOnClickListener(v -> { if (startBtn != null) startBtn.setEnabled(true); showCamera(); });
                   overlay.addView(again);
               }
 
-              private TextView text(String value, int sp, int color, int style) {
-                  TextView v = new TextView(this);
-                  v.setText(value);
-                  v.setTextSize(sp);
-                  v.setTextColor(color);
-                  v.setTypeface(Typeface.DEFAULT, style);
-                  v.setPadding(0, 10, 0, 10);
-                  return v;
+              private void startUiLoop() {
+                  handler.postDelayed(new Runnable() {
+                      public void run() {
+                          if (liveMeter != null) liveMeter.setText("Motion: " + Math.round(currentMotion));
+                          handler.postDelayed(this, 250);
+                      }
+                  }, 250);
               }
 
-              private GradientDrawable bg(int color, int stroke) {
-                  GradientDrawable d = new GradientDrawable();
-                  d.setColor(color);
-                  d.setCornerRadius(28);
-                  d.setStroke(2, stroke);
-                  return d;
+              private TextView text(String value, int sp, int color, int style) {
+                  TextView t = new TextView(this);
+                  t.setText(value);
+                  t.setTextSize(sp);
+                  t.setTextColor(color);
+                  t.setTypeface(Typeface.DEFAULT, style);
+                  t.setPadding(0, 10, 0, 10);
+                  return t;
               }
 
               private Button btn(String label) {
@@ -408,7 +363,7 @@ jobs:
                   return b;
               }
 
-              private View card(String title, String sub) {
+              private View card(String title, String body) {
                   LinearLayout c = new LinearLayout(this);
                   c.setOrientation(LinearLayout.VERTICAL);
                   c.setPadding(28, 26, 28, 26);
@@ -417,13 +372,21 @@ jobs:
                   p.setMargins(0, 20, 0, 0);
                   c.setLayoutParams(p);
                   c.addView(text(title, 21, Color.rgb(245,245,245), Typeface.BOLD));
-                  c.addView(text(sub, 15, Color.rgb(170,170,170), Typeface.NORMAL));
+                  c.addView(text(body, 15, Color.rgb(170,170,170), Typeface.NORMAL));
                   return c;
+              }
+
+              private GradientDrawable bg(int color, int stroke) {
+                  GradientDrawable g = new GradientDrawable();
+                  g.setColor(color);
+                  g.setCornerRadius(28);
+                  g.setStroke(2, stroke);
+                  return g;
               }
           }
           EOF
 
-      - name: Build camera APK
+      - name: Build real camera APK
         run: |
           cd native-apk
           gradle :app:assembleDebug --stacktrace
@@ -432,9 +395,9 @@ jobs:
         if: always()
         run: find native-apk/app/build/outputs -type f | sort || true
 
-      - name: Upload camera APK artifact
+      - name: Upload real camera APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: StrikeVision-camera-apk
+          name: StrikeVision-real-camera-apk
           path: native-apk/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
