@@ -47,16 +47,35 @@ jobs:
           test -f PunchVisionAI/settings.gradle.kts
 
       - name: Run unit tests and build installable APK
+        id: android_build
+        continue-on-error: true
         working-directory: PunchVisionAI
-        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
+        run: |
+          set -o pipefail
+          gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace 2>&1 | tee ../gradle-build.log
+
+      - name: Upload compiler log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PunchVisionAI-Build-Log
+          path: gradle-build.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Rename APK
+        if: steps.android_build.outcome == 'success'
         run: cp PunchVisionAI/app/build/outputs/apk/debug/app-debug.apk PunchVisionAI-v1.0-debug.apk
 
       - name: Upload finished APK
+        if: steps.android_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: PunchVisionAI-APK
           path: PunchVisionAI-v1.0-debug.apk
           if-no-files-found: error
           retention-days: 7
+
+      - name: Mark compiler failure
+        if: steps.android_build.outcome == 'failure'
+        run: exit 1
