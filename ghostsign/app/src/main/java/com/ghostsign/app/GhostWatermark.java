@@ -28,37 +28,52 @@ import java.util.Locale;
 
 public final class GhostWatermark {
     private static final String KEY_ALIAS = "ghostsign_identity_v1";
-    private static final byte VERSION = 1;
-    private static final byte[] DOMAIN = "GhostSign/v1".getBytes(StandardCharsets.UTF_8);
+    private static final byte VERSION_1 = 1;
+    private static final byte VERSION_2 = 2;
+    private static final byte[] DOMAIN_V1 = "GhostSign/v1".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] DOMAIN_V2 = "GhostSign/v2-custom-signature".getBytes(StandardCharsets.UTF_8);
 
-    // Marker characters are invisible Unicode separators. Payload characters carry two bits each.
     private static final String START = "\u2063\u2064\u2063\u2064";
     private static final String END = "\u2064\u2063\u2064\u2063";
     private static final char[] ALPHABET = {'\u200B', '\u200C', '\u200D', '\u2060'};
     private static final int PUBLIC_KEY_BYTES = 65;
-    private static final int SIGNATURE_BYTES = 64;
-    private static final int PAYLOAD_BYTES = 1 + 4 + 4 + PUBLIC_KEY_BYTES + SIGNATURE_BYTES;
+    private static final int CRYPTO_SIGNATURE_BYTES = 64;
+    private static final int V1_PAYLOAD_BYTES = 1 + 4 + 4 + PUBLIC_KEY_BYTES + CRYPTO_SIGNATURE_BYTES;
+    public static final int MAX_CUSTOM_SIGNATURE_BYTES = 512;
 
     private GhostWatermark() {}
 
     public static String sign(String text) throws Exception {
+        return sign(text, "");
+    }
+
+    public static String sign(String text, String customSignature) throws Exception {
         String visible = stripWatermarks(text == null ? "" : text);
+        String chosen = normalize(customSignature == null ? "" : customSignature);
+        byte[] chosenBytes = chosen.getBytes(StandardCharsets.UTF_8);
+        if (chosenBytes.length > MAX_CUSTOM_SIGNATURE_BYTES) {
+            throw new IllegalArgumentException("Hidden signature is over " + MAX_CUSTOM_SIGNATURE_BYTES + " UTF-8 bytes");
+        }
+
         KeyPair pair = getOrCreateKeyPair();
         byte[] publicKey = publicKeyToRaw((ECPublicKey) pair.getPublic());
         int timestamp = (int) (System.currentTimeMillis() / 1000L);
         int nonce = new SecureRandom().nextInt();
         byte[] digest = sha256(normalize(visible).getBytes(StandardCharsets.UTF_8));
-        byte[] signedData = signedData(timestamp, nonce, publicKey, digest);
+        byte[] signedData = signedDataV2(timestamp, nonce, chosenBytes, publicKey, digest);
 
         Signature signer = Signature.getInstance("SHA256withECDSA");
         signer.initSign(pair.getPrivate());
         signer.update(signedData);
         byte[] rawSignature = derToRaw(signer.sign());
 
-        ByteBuffer payload = ByteBuffer.allocate(PAYLOAD_BYTES);
-        payload.put(VERSION);
+        ByteBuffer payload = ByteBuffer.allocate(
+                1 + 4 + 4 + 2 + chosenBytes.length + PUBLIC_KEY_BYTES + CRYPTO_SIGNATURE_BYTES);
+        payload.put(VERSION_2);
         payload.putInt(timestamp);
         payload.putInt(nonce);
+        payload.putShort((short) chosenBytes.length);
+        payload.put(chosenBytes);
         payload.put(publicKey);
         payload.put(rawSignature);
         return visible + START + encode(payload.array()) + END;
@@ -79,37 +94,86 @@ public final class GhostWatermark {
             }
 
             byte[] payload = decode(text.substring(start + START.length(), end));
-            if (payload.length != PAYLOAD_BYTES) {
-                return Verification.invalid("The watermark payload is damaged.");
+            if (payload.length == 0) {
+                return Verification.invalid("The watermark payload is empty.");
             }
-
-            ByteBuffer buffer = ByteBuffer.wrap(payload);
-            byte version = buffer.get();
-            if (version != VERSION) {
-                return Verification.invalid("Unsupported GhostSign version.");
+            if (payload[0] == VERSION_1) {
+                return verifyV1(text, payload);
             }
-            int timestamp = buffer.getInt();
-            int nonce = buffer.getInt();
-            byte[] publicRaw = new byte[PUBLIC_KEY_BYTES];
-            byte[] signatureRaw = new byte[SIGNATURE_BYTES];
-            buffer.get(publicRaw);
-            buffer.get(signatureRaw);
-
-            String visible = stripWatermarks(text);
-            byte[] digest = sha256(normalize(visible).getBytes(StandardCharsets.UTF_8));
-            PublicKey publicKey = rawToPublicKey(publicRaw);
-            Signature verifier = Signature.getInstance("SHA256withECDSA");
-            verifier.initVerify(publicKey);
-            verifier.update(signedData(timestamp, nonce, publicRaw, digest));
-            boolean valid = verifier.verify(rawToDer(signatureRaw));
-            String fingerprint = fingerprint(publicRaw);
-            if (!valid) {
-                return new Verification(false, "Signature mismatch: the visible text was changed or the watermark is damaged.", fingerprint, timestamp, visible);
+            if (payload[0] == VERSION_2) {
+                return verifyV2(text, payload);
             }
-            return new Verification(true, "Authentic GhostSign watermark.", fingerprint, timestamp, visible);
+            return Verification.invalid("Unsupported GhostSign version.");
         } catch (Exception error) {
             return Verification.invalid("Could not decode watermark: " + error.getMessage());
         }
+    }
+
+    private static Verification verifyV1(String text, byte[] payload) throws Exception {
+        if (payload.length != V1_PAYLOAD_BYTES) {
+            return Verification.invalid("The legacy watermark payload is damaged.");
+        }
+        ByteBuffer buffer = ByteBuffer.wrap(payload);
+        buffer.get();
+        int timestamp = buffer.getInt();
+        int nonce = buffer.getInt();
+        byte[] publicRaw = new byte[PUBLIC_KEY_BYTES];
+        byte[] signatureRaw = new byte[CRYPTO_SIGNATURE_BYTES];
+        buffer.get(publicRaw);
+        buffer.get(signatureRaw);
+
+        String visible = stripWatermarks(text);
+        byte[] digest = sha256(normalize(visible).getBytes(StandardCharsets.UTF_8));
+        boolean valid = verifyCryptographicSignature(
+                publicRaw, signatureRaw, signedDataV1(timestamp, nonce, publicRaw, digest));
+        String fingerprint = fingerprint(publicRaw);
+        if (!valid) {
+            return new Verification(false,
+                    "Signature mismatch: the visible text was changed or the watermark is damaged.",
+                    fingerprint, timestamp, visible, "", VERSION_1);
+        }
+        return new Verification(true, "Authentic legacy GhostSign watermark.",
+                fingerprint, timestamp, visible, "", VERSION_1);
+    }
+
+    private static Verification verifyV2(String text, byte[] payload) throws Exception {
+        int minimum = 1 + 4 + 4 + 2 + PUBLIC_KEY_BYTES + CRYPTO_SIGNATURE_BYTES;
+        if (payload.length < minimum) {
+            return Verification.invalid("The watermark payload is damaged.");
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(payload);
+        buffer.get();
+        int timestamp = buffer.getInt();
+        int nonce = buffer.getInt();
+        int chosenLength = buffer.getShort() & 0xFFFF;
+        if (chosenLength > MAX_CUSTOM_SIGNATURE_BYTES
+                || buffer.remaining() != chosenLength + PUBLIC_KEY_BYTES + CRYPTO_SIGNATURE_BYTES) {
+            return Verification.invalid("The hidden signature length is invalid.");
+        }
+
+        byte[] chosenBytes = new byte[chosenLength];
+        byte[] publicRaw = new byte[PUBLIC_KEY_BYTES];
+        byte[] signatureRaw = new byte[CRYPTO_SIGNATURE_BYTES];
+        buffer.get(chosenBytes);
+        buffer.get(publicRaw);
+        buffer.get(signatureRaw);
+
+        String visible = stripWatermarks(text);
+        byte[] digest = sha256(normalize(visible).getBytes(StandardCharsets.UTF_8));
+        boolean valid = verifyCryptographicSignature(
+                publicRaw,
+                signatureRaw,
+                signedDataV2(timestamp, nonce, chosenBytes, publicRaw, digest));
+        String fingerprint = fingerprint(publicRaw);
+        String customSignature = new String(chosenBytes, StandardCharsets.UTF_8);
+        if (!valid) {
+            return new Verification(false,
+                    "Signature mismatch: the visible text or hidden signature was changed.",
+                    fingerprint, timestamp, visible, customSignature, VERSION_2);
+        }
+        return new Verification(true, "Authentic GhostSign watermark.",
+                fingerprint, timestamp, visible, customSignature, VERSION_2);
     }
 
     public static String stripWatermarks(String text) {
@@ -138,6 +202,10 @@ public final class GhostWatermark {
         return fingerprint(publicKeyToRaw((ECPublicKey) getOrCreateKeyPair().getPublic()));
     }
 
+    public static int customSignatureByteCount(String value) {
+        return normalize(value == null ? "" : value).getBytes(StandardCharsets.UTF_8).length;
+    }
+
     private static KeyPair getOrCreateKeyPair() throws Exception {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore");
         store.load(null);
@@ -147,7 +215,8 @@ public final class GhostWatermark {
             return new KeyPair(publicKey, privateKey);
         }
 
-        KeyPairGenerator generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore");
+        KeyPairGenerator generator = KeyPairGenerator.getInstance(
+                KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore");
         KeyGenParameterSpec spec = new KeyGenParameterSpec.Builder(
                 KEY_ALIAS,
                 KeyProperties.PURPOSE_SIGN | KeyProperties.PURPOSE_VERIFY)
@@ -158,12 +227,39 @@ public final class GhostWatermark {
         return generator.generateKeyPair();
     }
 
-    private static byte[] signedData(int timestamp, int nonce, byte[] publicKey, byte[] textDigest) {
-        ByteBuffer buffer = ByteBuffer.allocate(DOMAIN.length + 1 + 4 + 4 + publicKey.length + textDigest.length);
-        buffer.put(DOMAIN);
-        buffer.put(VERSION);
+    private static boolean verifyCryptographicSignature(
+            byte[] publicRaw, byte[] signatureRaw, byte[] signedData) throws Exception {
+        PublicKey publicKey = rawToPublicKey(publicRaw);
+        Signature verifier = Signature.getInstance("SHA256withECDSA");
+        verifier.initVerify(publicKey);
+        verifier.update(signedData);
+        return verifier.verify(rawToDer(signatureRaw));
+    }
+
+    private static byte[] signedDataV1(
+            int timestamp, int nonce, byte[] publicKey, byte[] textDigest) {
+        ByteBuffer buffer = ByteBuffer.allocate(
+                DOMAIN_V1.length + 1 + 4 + 4 + publicKey.length + textDigest.length);
+        buffer.put(DOMAIN_V1);
+        buffer.put(VERSION_1);
         buffer.putInt(timestamp);
         buffer.putInt(nonce);
+        buffer.put(publicKey);
+        buffer.put(textDigest);
+        return buffer.array();
+    }
+
+    private static byte[] signedDataV2(
+            int timestamp, int nonce, byte[] customSignature, byte[] publicKey, byte[] textDigest) {
+        ByteBuffer buffer = ByteBuffer.allocate(
+                DOMAIN_V2.length + 1 + 4 + 4 + 2 + customSignature.length
+                        + publicKey.length + textDigest.length);
+        buffer.put(DOMAIN_V2);
+        buffer.put(VERSION_2);
+        buffer.putInt(timestamp);
+        buffer.putInt(nonce);
+        buffer.putShort((short) customSignature.length);
+        buffer.put(customSignature);
         buffer.put(publicKey);
         buffer.put(textDigest);
         return buffer.array();
@@ -327,7 +423,9 @@ public final class GhostWatermark {
     }
 
     private static String normalize(String text) {
-        return Normalizer.normalize(text.replace("\r\n", "\n").replace('\r', '\n'), Normalizer.Form.NFC);
+        return Normalizer.normalize(
+                text.replace("\r\n", "\n").replace('\r', '\n'),
+                Normalizer.Form.NFC);
     }
 
     private static String fingerprint(byte[] publicKey) throws Exception {
@@ -348,17 +446,28 @@ public final class GhostWatermark {
         public final String fingerprint;
         public final long timestampSeconds;
         public final String visibleText;
+        public final String customSignature;
+        public final int version;
 
-        private Verification(boolean valid, String message, String fingerprint, long timestampSeconds, String visibleText) {
+        private Verification(
+                boolean valid,
+                String message,
+                String fingerprint,
+                long timestampSeconds,
+                String visibleText,
+                String customSignature,
+                int version) {
             this.valid = valid;
             this.message = message;
             this.fingerprint = fingerprint;
             this.timestampSeconds = timestampSeconds;
             this.visibleText = visibleText;
+            this.customSignature = customSignature;
+            this.version = version;
         }
 
         private static Verification invalid(String message) {
-            return new Verification(false, message, "", 0L, "");
+            return new Verification(false, message, "", 0L, "", "", 0);
         }
 
         public Date signedAt() {
