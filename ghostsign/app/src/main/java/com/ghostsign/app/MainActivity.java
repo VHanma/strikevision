@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ComponentName;
-import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -226,7 +225,23 @@ public class MainActivity extends Activity {
         GhostWatermark.Verification result = GhostWatermark.verify(editor.getText().toString());
         if (result.valid) {
             String date = DateFormat.getDateTimeInstance().format(result.signedAt());
-            setStatus("AUTHENTIC\nIdentity: " + result.fingerprint + "\nSigned: " + date + "\nThe visible text still matches the signature.", true);
+            try {
+                String currentIdentity = GhostWatermark.currentFingerprint();
+                boolean mine = currentIdentity.equals(result.fingerprint);
+                if (mine) {
+                    setStatus("AUTHENTIC — YOUR SIGNING IDENTITY\nIdentity: " + result.fingerprint
+                            + "\nSigned: " + date
+                            + "\nThe visible text still matches your cryptographic signature.", true);
+                } else {
+                    setStatus("VALID SIGNATURE — DIFFERENT IDENTITY\nIdentity: " + result.fingerprint
+                            + "\nSigned: " + date
+                            + "\nThe text is intact, but it was not signed by this phone's GhostSign identity.", false);
+                }
+            } catch (Exception error) {
+                setStatus("VALID SIGNATURE\nIdentity: " + result.fingerprint
+                        + "\nSigned: " + date
+                        + "\nThe visible text matches, but this phone could not compare identities.", true);
+            }
         } else {
             setStatus("NOT VERIFIED\n" + result.message
                     + (result.fingerprint.isEmpty() ? "" : "\nClaimed identity: " + result.fingerprint), false);
