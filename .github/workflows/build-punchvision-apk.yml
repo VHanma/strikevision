@@ -46,6 +46,26 @@ jobs:
           unzip -q PunchVisionAI-source.zip
           test -f PunchVisionAI/settings.gradle.kts
 
+      - name: Lock Android 36 compatible libraries
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("PunchVisionAI/app/build.gradle.kts")
+          text = path.read_text()
+          replacements = {
+              'androidx.compose:compose-bom:2026.06.00': 'androidx.compose:compose-bom:2025.05.01',
+              'androidx.core:core-ktx:1.19.0': 'androidx.core:core-ktx:1.16.0',
+              'androidx.activity:activity-compose:1.12.4': 'androidx.activity:activity-compose:1.10.1',
+              'androidx.lifecycle:lifecycle-runtime-ktx:2.11.0': 'androidx.lifecycle:lifecycle-runtime-ktx:2.9.1',
+              'androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0': 'androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"Missing expected dependency: {old}")
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
+
       - name: Run unit tests and build installable APK
         id: android_build
         continue-on-error: true
