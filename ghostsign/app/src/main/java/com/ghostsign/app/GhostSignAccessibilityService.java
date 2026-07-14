@@ -41,31 +41,50 @@ public class GhostSignAccessibilityService extends AccessibilityService {
                 if (current == null) {
                     return;
                 }
+
                 String raw = current.toString();
                 String visible = GhostWatermark.stripWatermarks(raw);
                 if (visible.trim().isEmpty() || visible.length() > 12000) {
                     return;
                 }
 
-                if (GhostWatermark.hasWatermark(raw) && GhostWatermark.verify(raw).valid) {
+                String customSignature = getSharedPreferences("ghostsign", MODE_PRIVATE)
+                        .getString("custom_signature", "");
+                if (GhostWatermark.customSignatureByteCount(customSignature)
+                        > GhostWatermark.MAX_CUSTOM_SIGNATURE_BYTES) {
                     return;
                 }
 
-                String signed = GhostWatermark.sign(visible);
+                if (GhostWatermark.hasWatermark(raw)) {
+                    GhostWatermark.Verification existing = GhostWatermark.verify(raw);
+                    if (existing.valid && customSignature.equals(existing.customSignature)) {
+                        return;
+                    }
+                }
+
+                String signed = GhostWatermark.sign(visible, customSignature);
                 Bundle textArguments = new Bundle();
                 textArguments.putCharSequence(
                         AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
                         signed);
                 ignoreEventsUntil = SystemClock.uptimeMillis() + 900L;
-                boolean changed = field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, textArguments);
+                boolean changed = field.performAction(
+                        AccessibilityNodeInfo.ACTION_SET_TEXT,
+                        textArguments);
                 if (changed) {
                     Bundle selection = new Bundle();
-                    selection.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, signed.length());
-                    selection.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, signed.length());
-                    field.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selection);
+                    selection.putInt(
+                            AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT,
+                            signed.length());
+                    selection.putInt(
+                            AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT,
+                            signed.length());
+                    field.performAction(
+                            AccessibilityNodeInfo.ACTION_SET_SELECTION,
+                            selection);
                 }
             } catch (Exception ignored) {
-                // The service deliberately stays silent in apps that block accessibility text replacement.
+                // Some apps deliberately block accessibility text replacement.
             }
         }
     };
