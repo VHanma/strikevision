@@ -1,0 +1,62 @@
+name: Build PunchVision APK
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "build_payload/**"
+      - ".github/workflows/build-punchvision-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout project payload
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Reconstruct exact Kotlin project
+        run: |
+          cat build_payload/PunchVisionAI-source.zip.b64.part* | base64 --decode > PunchVisionAI-source.zip
+          echo "5c488ca4379da716a016b3384f13fb327af4d5168b33184ae54691a32617eed7  PunchVisionAI-source.zip" | sha256sum --check
+          unzip -q PunchVisionAI-source.zip
+          test -f PunchVisionAI/settings.gradle.kts
+
+      - name: Run unit tests and build installable APK
+        working-directory: PunchVisionAI
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
+
+      - name: Rename APK
+        run: cp PunchVisionAI/app/build/outputs/apk/debug/app-debug.apk PunchVisionAI-v1.0-debug.apk
+
+      - name: Upload finished APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PunchVisionAI-APK
+          path: PunchVisionAI-v1.0-debug.apk
+          if-no-files-found: error
+          retention-days: 7
