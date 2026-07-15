@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "build_payload/**"
+      - "bridge_patch/**"
       - ".github/workflows/build-punchvision-apk.yml"
 
 permissions:
@@ -66,6 +67,23 @@ jobs:
           path.write_text(text)
           PY
 
+      - name: Apply FightCamp Console Bridge patch
+        run: |
+          mkdir -p PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge
+          cp bridge_patch/BridgeModels.kt PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge/BridgeModels.kt
+          cp bridge_patch/FightCampBridgeScanner.kt PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge/FightCampBridgeScanner.kt
+          cp bridge_patch/BridgeScreen.kt PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/ui/BridgeScreen.kt
+          cp bridge_patch/PunchVisionApp.kt PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/ui/PunchVisionApp.kt
+          cp bridge_patch/AndroidManifest.xml PunchVisionAI/app/src/main/AndroidManifest.xml
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("PunchVisionAI/app/build.gradle.kts")
+          text = path.read_text()
+          text = text.replace('versionCode = 1', 'versionCode = 2')
+          text = text.replace('versionName = "1.0.0"', 'versionName = "1.1.0"')
+          path.write_text(text)
+          PY
+
       - name: Run unit tests and build installable APK
         id: android_build
         continue-on-error: true
@@ -78,21 +96,21 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: PunchVisionAI-Build-Log
+          name: PunchVisionAI-Bridge-Build-Log
           path: gradle-build.log
           if-no-files-found: error
           retention-days: 7
 
       - name: Rename APK
         if: steps.android_build.outcome == 'success'
-        run: cp PunchVisionAI/app/build/outputs/apk/debug/app-debug.apk PunchVisionAI-v1.0-debug.apk
+        run: cp PunchVisionAI/app/build/outputs/apk/debug/app-debug.apk PunchVisionAI-FightCamp-Bridge-v1.1.apk
 
       - name: Upload finished APK
         if: steps.android_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: PunchVisionAI-APK
-          path: PunchVisionAI-v1.0-debug.apk
+          name: PunchVisionAI-FightCamp-Bridge-APK
+          path: PunchVisionAI-FightCamp-Bridge-v1.1.apk
           if-no-files-found: error
           retention-days: 7
 
