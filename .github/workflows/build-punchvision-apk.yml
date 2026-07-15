@@ -85,15 +85,12 @@ jobs:
 
           scanner = Path("PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge/FightCampBridgeScanner.kt")
           text = scanner.read_text()
-          old = '''        val name = record?.deviceName
-              ?: if (hasBleConnectPermission()) runCatching { result.device.name }.getOrNull() else null
-              ?: "Unnamed BLE device"'''
-          new = '''        val name: String = record?.deviceName
-              ?: (if (hasBleConnectPermission()) runCatching { result.device.name }.getOrNull() else null)
-              ?: "Unnamed BLE device"'''
-          if old not in text:
-              raise SystemExit("Expected nullable BLE-name block was not found")
-          scanner.write_text(text.replace(old, new))
+          text = text.replace('val name = record?.deviceName', 'val name: String = record?.deviceName')
+          text = text.replace(
+              '?: if (hasBleConnectPermission()) runCatching { result.device.name }.getOrNull() else null',
+              '?: (if (hasBleConnectPermission()) runCatching { result.device.name }.getOrNull() else null)'
+          )
+          scanner.write_text(text)
           PY
 
       - name: Run unit tests and build installable APK
