@@ -77,11 +77,23 @@ jobs:
           cp bridge_patch/AndroidManifest.xml PunchVisionAI/app/src/main/AndroidManifest.xml
           python3 - <<'PY'
           from pathlib import Path
-          path = Path("PunchVisionAI/app/build.gradle.kts")
-          text = path.read_text()
+          gradle = Path("PunchVisionAI/app/build.gradle.kts")
+          text = gradle.read_text()
           text = text.replace('versionCode = 1', 'versionCode = 2')
           text = text.replace('versionName = "1.0.0"', 'versionName = "1.1.0"')
-          path.write_text(text)
+          gradle.write_text(text)
+
+          scanner = Path("PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge/FightCampBridgeScanner.kt")
+          text = scanner.read_text()
+          old = '''        val name = record?.deviceName
+              ?: if (hasBleConnectPermission()) runCatching { result.device.name }.getOrNull() else null
+              ?: "Unnamed BLE device"'''
+          new = '''        val name: String = record?.deviceName
+              ?: (if (hasBleConnectPermission()) runCatching { result.device.name }.getOrNull() else null)
+              ?: "Unnamed BLE device"'''
+          if old not in text:
+              raise SystemExit("Expected nullable BLE-name block was not found")
+          scanner.write_text(text.replace(old, new))
           PY
 
       - name: Run unit tests and build installable APK
