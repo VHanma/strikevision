@@ -2,8 +2,6 @@ name: Build SpecterGrid APK
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [ main ]
   push:
     branches: [ main ]
     paths-ignore:
@@ -18,17 +16,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Reconstruct SpecterGrid project
-        shell: bash
-        run: |
-          cat spectergrid-source/part-*.b64 > SpecterGrid_Source.zip.b64
-          base64 --decode SpecterGrid_Source.zip.b64 > SpecterGrid_Source.zip
-          echo "78a62b90822c112d1de19f15b19d5868b5d62d87ecb44ad14416034ce7c6ac37  SpecterGrid_Source.zip" | sha256sum -c -
-          rm -rf spectergrid-build
-          mkdir spectergrid-build
-          unzip -q SpecterGrid_Source.zip -d spectergrid-build
-          test -f spectergrid-build/SpecterGrid/settings.gradle.kts
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -47,27 +34,54 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build SpecterGrid APK
-        working-directory: spectergrid-build/SpecterGrid
-        run: gradle --no-daemon clean assembleDebug --stacktrace
-
-      - name: Publish installable APK into repository
+      - name: Reconstruct, build, and publish diagnostics
         shell: bash
         run: |
+          set +e
           mkdir -p spectergrid-apk
-          cp spectergrid-build/SpecterGrid/app/build/outputs/apk/debug/app-debug.apk spectergrid-apk/SpecterGrid.apk
-          sha256sum spectergrid-apk/SpecterGrid.apk > spectergrid-apk/SpecterGrid.apk.sha256
+          : > spectergrid-apk/build.log
+          {
+            echo "=== RECONSTRUCT ==="
+            cat spectergrid-source/part-*.b64 > SpecterGrid_Source.zip.b64
+            base64 --decode SpecterGrid_Source.zip.b64 > SpecterGrid_Source.zip
+            echo "78a62b90822c112d1de19f15b19d5868b5d62d87ecb44ad14416034ce7c6ac37  SpecterGrid_Source.zip" | sha256sum -c -
+            RECON=$?
+            if [ "$RECON" -eq 0 ]; then
+              rm -rf spectergrid-build
+              mkdir spectergrid-build
+              unzip -q SpecterGrid_Source.zip -d spectergrid-build
+              cd spectergrid-build/SpecterGrid
+              echo "=== GRADLE BUILD ==="
+              gradle --no-daemon clean assembleDebug --stacktrace
+              STATUS=$?
+              cd ../..
+            else
+              STATUS=$RECON
+            fi
+          } 2>&1 | tee spectergrid-apk/build.log
+          PIPE_STATUS=${PIPESTATUS[0]}
+          if [ "${STATUS:-$PIPE_STATUS}" -eq 0 ] && [ -f spectergrid-build/SpecterGrid/app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp spectergrid-build/SpecterGrid/app/build/outputs/apk/debug/app-debug.apk spectergrid-apk/SpecterGrid.apk
+            sha256sum spectergrid-apk/SpecterGrid.apk > spectergrid-apk/SpecterGrid.apk.sha256
+            echo "SUCCESS" > spectergrid-apk/BUILD_STATUS.txt
+            FINAL=0
+          else
+            echo "FAILED status=${STATUS:-$PIPE_STATUS}" > spectergrid-apk/BUILD_STATUS.txt
+            FINAL=${STATUS:-$PIPE_STATUS}
+          fi
           git config user.name "SpecterGrid Builder"
           git config user.email "actions@github.com"
-          git add spectergrid-apk/SpecterGrid.apk spectergrid-apk/SpecterGrid.apk.sha256
+          git add spectergrid-apk
           if ! git diff --cached --quiet; then
-            git commit -m "Publish SpecterGrid installable APK [skip ci]"
+            git commit -m "Publish SpecterGrid build result [skip ci]"
             git push
           fi
+          exit "$FINAL"
 
-      - name: Upload backup artifact
+      - name: Upload backup result
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SpecterGrid-installable-apk
+          name: SpecterGrid-build-result
           path: spectergrid-apk/*
           if-no-files-found: error
