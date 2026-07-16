@@ -1,4 +1,4 @@
-name: Build PunchVision APK
+name: Build PunchVision Apex Fusion APK
 
 on:
   pull_request:
@@ -7,6 +7,7 @@ on:
     paths:
       - "build_payload/**"
       - "bridge_patch/**"
+      - "apex_payload/**"
       - ".github/workflows/build-punchvision-apk.yml"
 
 permissions:
@@ -67,7 +68,7 @@ jobs:
           path.write_text(text)
           PY
 
-      - name: Apply FightCamp Console Bridge patch
+      - name: Apply FightCamp Console Bridge foundation
         run: |
           mkdir -p PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge
           cp bridge_patch/BridgeModels.kt PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge/BridgeModels.kt
@@ -93,7 +94,21 @@ jobs:
           scanner.write_text(text)
           PY
 
-      - name: Run unit tests and build installable APK
+      - name: Apply PunchVision Apex Fusion v2 patch
+        run: |
+          cat apex_payload/PunchVisionAI-ApexFusion-patch.zip.b64.part* | base64 --decode > PunchVisionAI-ApexFusion-patch.zip
+          echo "f639390dfa2f9728f3aa512a5e4ccb5b73480bc6a434591d8dfa3a305809186d  PunchVisionAI-ApexFusion-patch.zip" | sha256sum --check
+          unzip -qo PunchVisionAI-ApexFusion-patch.zip -d PunchVisionAI
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("PunchVisionAI/app/build.gradle.kts")
+          text = path.read_text()
+          text = text.replace('versionCode = 2', 'versionCode = 3')
+          text = text.replace('versionName = "1.1.0"', 'versionName = "2.0.0"')
+          path.write_text(text)
+          PY
+
+      - name: Run Apex unit tests and build installable APK
         id: android_build
         continue-on-error: true
         working-directory: PunchVisionAI
@@ -105,21 +120,21 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: PunchVisionAI-Bridge-Build-Log
+          name: PunchVisionAI-Apex-Build-Log
           path: gradle-build.log
           if-no-files-found: error
           retention-days: 7
 
       - name: Rename APK
         if: steps.android_build.outcome == 'success'
-        run: cp PunchVisionAI/app/build/outputs/apk/debug/app-debug.apk PunchVisionAI-FightCamp-Bridge-v1.1.apk
+        run: cp PunchVisionAI/app/build/outputs/apk/debug/app-debug.apk PunchVisionAI-Apex-Fusion-v2.0.apk
 
       - name: Upload finished APK
         if: steps.android_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: PunchVisionAI-FightCamp-Bridge-APK
-          path: PunchVisionAI-FightCamp-Bridge-v1.1.apk
+          name: PunchVisionAI-Apex-Fusion-APK
+          path: PunchVisionAI-Apex-Fusion-v2.0.apk
           if-no-files-found: error
           retention-days: 7
 
