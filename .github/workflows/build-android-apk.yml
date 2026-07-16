@@ -2,6 +2,8 @@ name: Build SpecterGrid APK
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [ main ]
   push:
     branches: [ main ]
     paths-ignore:
@@ -74,7 +76,11 @@ jobs:
           git add spectergrid-apk
           if ! git diff --cached --quiet; then
             git commit -m "Publish SpecterGrid build result [skip ci]"
-            git push
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              git push origin HEAD:main
+            else
+              git push
+            fi
           fi
           exit "$FINAL"
 
