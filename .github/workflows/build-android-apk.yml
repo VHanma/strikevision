@@ -6,9 +6,11 @@ on:
     branches: [ main ]
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'spectergrid-apk/**'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-spectergrid:
@@ -49,17 +51,23 @@ jobs:
         working-directory: spectergrid-build/SpecterGrid
         run: gradle --no-daemon clean assembleDebug --stacktrace
 
-      - name: Collect installable APK
+      - name: Publish installable APK into repository
         shell: bash
         run: |
-          mkdir -p apk-output
-          cp spectergrid-build/SpecterGrid/app/build/outputs/apk/debug/app-debug.apk apk-output/SpecterGrid.apk
-          sha256sum apk-output/SpecterGrid.apk > apk-output/SpecterGrid.apk.sha256
-          ls -lh apk-output
+          mkdir -p spectergrid-apk
+          cp spectergrid-build/SpecterGrid/app/build/outputs/apk/debug/app-debug.apk spectergrid-apk/SpecterGrid.apk
+          sha256sum spectergrid-apk/SpecterGrid.apk > spectergrid-apk/SpecterGrid.apk.sha256
+          git config user.name "SpecterGrid Builder"
+          git config user.email "actions@github.com"
+          git add spectergrid-apk/SpecterGrid.apk spectergrid-apk/SpecterGrid.apk.sha256
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish SpecterGrid installable APK [skip ci]"
+            git push
+          fi
 
-      - name: Upload SpecterGrid APK
+      - name: Upload backup artifact
         uses: actions/upload-artifact@v4
         with:
           name: SpecterGrid-installable-apk
-          path: apk-output/*
+          path: spectergrid-apk/*
           if-no-files-found: error
