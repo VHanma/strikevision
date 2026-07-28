@@ -5,11 +5,17 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.Editable;
+import android.text.Layout;
+import android.text.StaticLayout;
+import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -23,8 +29,11 @@ import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
+import androidx.core.content.FileProvider;
+
+import java.io.File;
+import java.io.FileOutputStream;
 import java.text.DateFormat;
-import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final int BG = Color.rgb(16, 17, 20);
@@ -72,7 +81,7 @@ public class MainActivity extends Activity {
         TextView title = text("GhostSign", 30, TEXT, true);
         page.addView(title);
         TextView subtitle = text(
-                "Cryptographic authorship marks with your own signature appended to the real text.",
+                "Hybrid mode: share ordinary text with hidden proof plus a PNG that preserves the exact signature opacity.",
                 16, MUTED, false);
         subtitle.setPadding(0, dp(4), 0, dp(20));
         page.addView(subtitle);
@@ -105,7 +114,7 @@ public class MainActivity extends Activity {
         page.addView(fingerprint);
 
         TextView identityNote = text(
-                "Keep this fingerprint. Your chosen signature can change whenever you want, while this private signing identity proves which phone created the watermark.",
+                "Keep this fingerprint. The text watermark proves authorship. The image preserves the exact visible opacity of your chosen signature.",
                 13, MUTED, false);
         identityNote.setPadding(0, dp(6), 0, dp(22));
         page.addView(identityNote);
@@ -131,19 +140,23 @@ public class MainActivity extends Activity {
         signatureParams.setMargins(0, dp(8), 0, dp(8));
         page.addView(customSignatureEditor, signatureParams);
 
-        opacityLabel = text("Signature opacity: 0% · fully invisible", 14, TEXT, true);
+        opacityLabel = text("Image signature opacity: 1%", 14, TEXT, true);
         opacityLabel.setPadding(0, dp(5), 0, 0);
         page.addView(opacityLabel);
 
         opacitySeek = new SeekBar(this);
         opacitySeek.setMax(100);
-        opacitySeek.setProgress(getSharedPreferences("ghostsign", MODE_PRIVATE)
-                .getInt("signature_opacity", 0));
+        int savedOpacity = getSharedPreferences("ghostsign", MODE_PRIVATE)
+                .getInt("signature_opacity", 1);
+        if (savedOpacity < 1) {
+            savedOpacity = 1;
+        }
+        opacitySeek.setProgress(savedOpacity);
         opacitySeek.setProgressTintList(android.content.res.ColorStateList.valueOf(ACCENT));
         opacitySeek.setThumbTintList(android.content.res.ColorStateList.valueOf(ACCENT));
         page.addView(opacitySeek);
 
-        TextView previewLabel = text("PREVIEW", 12, MUTED, true);
+        TextView previewLabel = text("IMAGE SIGNATURE PREVIEW", 12, MUTED, true);
         previewLabel.setPadding(0, dp(6), 0, dp(4));
         page.addView(previewLabel);
 
@@ -156,7 +169,7 @@ public class MainActivity extends Activity {
                 dp(58)));
 
         TextView opacityNote = text(
-                "0% keeps the signature only inside the invisible cryptographic watermark. Any setting above 0% appends your actual signature characters after the message. Rich-text apps may show the selected opacity; plain-text messaging apps show the signature normally instead of deleting it.",
+                "The slider controls the PNG signature only. The plain text share stays ordinary text with an invisible cryptographic proof because raw text cannot carry reliable cross-phone opacity.",
                 13, MUTED, false);
         opacityNote.setPadding(0, dp(8), 0, dp(20));
         page.addView(opacityNote);
@@ -174,12 +187,17 @@ public class MainActivity extends Activity {
         opacitySeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int actual = Math.max(1, progress);
                 getSharedPreferences("ghostsign", MODE_PRIVATE)
-                        .edit().putInt("signature_opacity", progress).apply();
+                        .edit().putInt("signature_opacity", actual).apply();
                 updateSignaturePreview();
             }
             @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {
+                if (seekBar.getProgress() < 1) {
+                    seekBar.setProgress(1);
+                }
+            }
         });
         updateSignaturePreview();
 
@@ -201,13 +219,13 @@ public class MainActivity extends Activity {
         editorParams.setMargins(0, dp(8), 0, dp(10));
         page.addView(editor, editorParams);
 
-        Button sign = button("APPEND SIGNATURE + WATERMARK");
+        Button sign = button("ADD INVISIBLE TEXT WATERMARK");
         sign.setOnClickListener(view -> signEditor());
         page.addView(sign);
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        Button copy = button("COPY");
+        Button copy = button("COPY TEXT");
         Button paste = button("PASTE");
         Button verify = button("VERIFY");
         row.addView(copy, weighted());
@@ -219,8 +237,8 @@ public class MainActivity extends Activity {
         paste.setOnClickListener(view -> pasteFromClipboard());
         verify.setOnClickListener(view -> verifyEditor());
 
-        Button share = button("SHARE SIGNED TEXT");
-        share.setOnClickListener(view -> shareSignedText());
+        Button share = button("SHARE HYBRID TEXT + IMAGE");
+        share.setOnClickListener(view -> shareHybridContent());
         page.addView(share);
 
         Button strip = button("REMOVE HIDDEN WATERMARK FROM BOX");
@@ -233,14 +251,14 @@ public class MainActivity extends Activity {
         page.addView(strip);
 
         status = text(
-                "Above 0%, your actual signature is part of the outgoing plain text.",
+                "Hybrid share sends normal text with hidden proof and a PNG with exact opacity.",
                 14, MUTED, false);
         status.setPadding(0, dp(16), 0, dp(10));
         status.setTextIsSelectable(true);
         page.addView(status);
 
         TextView limits = text(
-                "True cross-app opacity is not part of ordinary plain text. The signature is guaranteed to be present above 0%, but apps that ignore rich-text styling will display it at normal visibility. The cryptographic watermark remains invisible underneath.",
+                "Important: the image preserves the exact visible signature opacity on any phone that displays images. The plain text portion carries the hidden proof, but some apps may ignore the extra text when sharing an image attachment.",
                 13, MUTED, false);
         page.addView(limits);
 
@@ -251,17 +269,11 @@ public class MainActivity extends Activity {
         if (signaturePreview == null || opacitySeek == null || customSignatureEditor == null) {
             return;
         }
-        int opacity = opacitySeek.getProgress();
+        int opacity = getOpacity();
         String custom = customSignatureEditor.getText().toString();
-        if (opacity == 0) {
-            opacityLabel.setText("Signature opacity: 0% · hidden watermark only");
-            signaturePreview.setText("Signature will not be visibly appended");
-            signaturePreview.setAlpha(0.45f);
-        } else {
-            opacityLabel.setText("Signature opacity: " + opacity + "% · actual text appended");
-            signaturePreview.setText(custom.isEmpty() ? "(empty signature)" : custom);
-            signaturePreview.setAlpha(Math.max(0.03f, opacity / 100f));
-        }
+        opacityLabel.setText("Image signature opacity: " + opacity + "%");
+        signaturePreview.setText(custom.isEmpty() ? "(empty signature)" : custom);
+        signaturePreview.setAlpha(Math.max(0.01f, opacity / 100f));
         int bytes = GhostWatermark.customSignatureByteCount(custom);
         if (bytes > GhostWatermark.MAX_CUSTOM_SIGNATURE_BYTES) {
             opacityLabel.setText(opacityLabel.getText() + " · signature too long");
@@ -276,7 +288,7 @@ public class MainActivity extends Activity {
     }
 
     private int getOpacity() {
-        return opacitySeek.getProgress();
+        return Math.max(1, opacitySeek.getProgress());
     }
 
     private String removeCurrentDisplayedSignature(String text, String custom) {
@@ -298,18 +310,6 @@ public class MainActivity extends Activity {
         return removeCurrentDisplayedSignature(withoutHidden, getCustomSignature());
     }
 
-    private String createOutgoingVisibleText() {
-        String baseMessage = getBaseMessage();
-        if (baseMessage.isEmpty()) {
-            throw new IllegalArgumentException("Type a message first");
-        }
-        String custom = getCustomSignature();
-        if (getOpacity() > 0 && !custom.isEmpty()) {
-            return baseMessage + "\n" + custom;
-        }
-        return baseMessage;
-    }
-
     private String createPlainSignedText() throws Exception {
         String custom = getCustomSignature();
         int bytes = GhostWatermark.customSignatureByteCount(custom);
@@ -318,8 +318,11 @@ public class MainActivity extends Activity {
                     "Custom signature is " + bytes + " bytes; maximum is "
                             + GhostWatermark.MAX_CUSTOM_SIGNATURE_BYTES);
         }
-        String outgoingVisible = createOutgoingVisibleText();
-        return GhostWatermark.sign(outgoingVisible, custom);
+        String baseMessage = getBaseMessage();
+        if (baseMessage.isEmpty()) {
+            throw new IllegalArgumentException("Type a message first");
+        }
+        return GhostWatermark.sign(baseMessage, custom);
     }
 
     private void signEditor() {
@@ -329,17 +332,11 @@ public class MainActivity extends Activity {
             editor.setText(signed);
             editor.setSelection(editor.length());
             int hidden = signed.length() - visible.length();
-            if (getOpacity() > 0 && !getCustomSignature().isEmpty()) {
-                setStatus(
-                        "Signature appended as real text: “" + getCustomSignature() + "”\n"
-                                + hidden + " invisible characters carry the cryptographic proof.",
-                        true);
-            } else {
-                setStatus(
-                        "Signature stored only inside the invisible watermark.\n"
-                                + hidden + " invisible characters carry the proof.",
-                        true);
-            }
+            setStatus(
+                    "Invisible text watermark added.\n"
+                            + hidden + " invisible characters carry the proof.\n"
+                            + "Use SHARE HYBRID TEXT + IMAGE to send the text plus a PNG with exact opacity.",
+                    true);
         } catch (Exception error) {
             setStatus("Signing failed: " + error.getMessage(), false);
         }
@@ -350,73 +347,116 @@ public class MainActivity extends Activity {
             String plainSigned = createPlainSignedText();
             editor.setText(plainSigned);
             editor.setSelection(editor.length());
-
             ClipboardManager clipboard =
                     (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            String html = buildRichHtml(plainSigned);
-            if (html == null) {
-                clipboard.setPrimaryClip(
-                        ClipData.newPlainText("GhostSign text", plainSigned));
-            } else {
-                clipboard.setPrimaryClip(
-                        ClipData.newHtmlText("GhostSign text", plainSigned, html));
-            }
-
-            setStatus(
-                    getOpacity() > 0
-                            ? "Copied. Your actual signature is included in the plain text."
-                            : "Copied with the signature stored only in the invisible watermark.",
-                    true);
+            clipboard.setPrimaryClip(ClipData.newPlainText("GhostSign text", plainSigned));
+            setStatus("Copied the plain text with hidden proof to the clipboard.", true);
         } catch (Exception error) {
             setStatus("Copy failed: " + error.getMessage(), false);
         }
     }
 
-    private void shareSignedText() {
+    private void shareHybridContent() {
         try {
             String plainSigned = createPlainSignedText();
+            String baseMessage = GhostWatermark.stripWatermarks(plainSigned);
+            Uri imageUri = buildShareImageUri(baseMessage, getCustomSignature(), getOpacity());
             editor.setText(plainSigned);
             editor.setSelection(editor.length());
 
             Intent intent = new Intent(Intent.ACTION_SEND);
-            intent.setType("text/plain");
+            intent.setType("image/png");
+            intent.putExtra(Intent.EXTRA_STREAM, imageUri);
             intent.putExtra(Intent.EXTRA_TEXT, plainSigned);
-            String html = buildRichHtml(plainSigned);
-            if (html != null) {
-                intent.putExtra(Intent.EXTRA_HTML_TEXT, html);
-            }
-            startActivity(Intent.createChooser(intent, "Share GhostSign text"));
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            intent.setClipData(ClipData.newUri(getContentResolver(), "GhostSign image", imageUri));
+            startActivity(Intent.createChooser(intent, "Share GhostSign hybrid message"));
+
+            setStatus(
+                    "Shared hybrid content: normal text with hidden proof plus a PNG carrying the exact "
+                            + getOpacity() + "% signature opacity.",
+                    true);
         } catch (Exception error) {
             setStatus("Share failed: " + error.getMessage(), false);
         }
     }
 
-    private String buildRichHtml(String plainSigned) {
-        int opacity = getOpacity();
-        String custom = getCustomSignature();
-        if (opacity <= 0 || custom.isEmpty()) {
-            return null;
+    private Uri buildShareImageUri(String message, String signature, int opacity) throws Exception {
+        Bitmap bitmap = renderHybridBitmap(message, signature, opacity);
+        File sharedDir = new File(getCacheDir(), "shared");
+        if (!sharedDir.exists() && !sharedDir.mkdirs()) {
+            throw new IllegalStateException("Could not create shared cache directory");
         }
-
-        String outgoingVisible = GhostWatermark.stripWatermarks(plainSigned);
-        String suffix = "\n" + custom;
-        String baseMessage = outgoingVisible.endsWith(suffix)
-                ? outgoingVisible.substring(0, outgoingVisible.length() - suffix.length())
-                : outgoingVisible;
-        String hiddenPayload = plainSigned.substring(outgoingVisible.length());
-        String decimalOpacity = String.format(Locale.US, "%.2f", opacity / 100f);
-
-        return "<div>"
-                + htmlText(baseMessage)
-                + "<br><span style=\"opacity:" + decimalOpacity + ";\">"
-                + htmlText(custom)
-                + "</span>"
-                + hiddenPayload
-                + "</div>";
+        File output = new File(sharedDir, "ghostsign_hybrid.png");
+        FileOutputStream stream = new FileOutputStream(output);
+        try {
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream);
+            stream.flush();
+        } finally {
+            stream.close();
+        }
+        return FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", output);
     }
 
-    private String htmlText(String value) {
-        return TextUtils.htmlEncode(value).replace("\n", "<br>");
+    private Bitmap renderHybridBitmap(String message, String signature, int opacity) {
+        int width = 1440;
+        int padding = 96;
+        int innerWidth = width - (padding * 2);
+        int gap = 48;
+
+        TextPaint messagePaint = new TextPaint(TextPaint.ANTI_ALIAS_FLAG);
+        messagePaint.setColor(Color.rgb(22, 22, 22));
+        messagePaint.setTextSize(50f);
+        messagePaint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.NORMAL));
+
+        TextPaint signaturePaint = new TextPaint(TextPaint.ANTI_ALIAS_FLAG);
+        signaturePaint.setColor(Color.rgb(22, 22, 22));
+        signaturePaint.setTextSize(42f);
+        signaturePaint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        signaturePaint.setAlpha(Math.max(1, Math.round(255f * (opacity / 100f))));
+
+        String safeMessage = message == null ? "" : message;
+        String safeSignature = signature == null ? "" : signature;
+
+        StaticLayout messageLayout = StaticLayout.Builder
+                .obtain(safeMessage, 0, safeMessage.length(), messagePaint, innerWidth)
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setLineSpacing(0f, 1.15f)
+                .setIncludePad(false)
+                .build();
+
+        boolean hasSignature = !safeSignature.isEmpty();
+        StaticLayout signatureLayout = hasSignature
+                ? StaticLayout.Builder
+                .obtain(safeSignature, 0, safeSignature.length(), signaturePaint, innerWidth)
+                .setAlignment(Layout.Alignment.ALIGN_OPPOSITE)
+                .setLineSpacing(0f, 1.1f)
+                .setIncludePad(false)
+                .build()
+                : null;
+
+        int height = padding + messageLayout.getHeight() + padding;
+        if (signatureLayout != null) {
+            height += gap + signatureLayout.getHeight();
+        }
+
+        Bitmap bitmap = Bitmap.createBitmap(width, Math.max(height, 500), Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        canvas.drawColor(Color.WHITE);
+
+        canvas.save();
+        canvas.translate(padding, padding);
+        messageLayout.draw(canvas);
+        canvas.restore();
+
+        if (signatureLayout != null) {
+            canvas.save();
+            canvas.translate(padding, padding + messageLayout.getHeight() + gap);
+            signatureLayout.draw(canvas);
+            canvas.restore();
+        }
+
+        return bitmap;
     }
 
     private void pasteFromClipboard() {
@@ -428,7 +468,7 @@ public class MainActivity extends Activity {
                     .getItemAt(0).coerceToText(this);
             editor.setText(value);
             editor.setSelection(editor.length());
-            setStatus("Pasted. Tap Verify to inspect the signature and proof.", true);
+            setStatus("Pasted. Tap Verify to inspect the hidden proof.", true);
         }
     }
 
@@ -449,7 +489,7 @@ public class MainActivity extends Activity {
                                     + "Chosen signature: " + chosen + "\n"
                                     + "Identity: " + result.fingerprint + "\n"
                                     + "Signed: " + date + "\n"
-                                    + "The complete visible text still matches your cryptographic proof.",
+                                    + "The visible text still matches your cryptographic proof.",
                             true);
                 } else {
                     setStatus(
@@ -493,8 +533,8 @@ public class MainActivity extends Activity {
     private void updateServiceState() {
         boolean enabled = isAccessibilityServiceEnabled();
         serviceState.setText(enabled
-                ? "● Automatic watermarking is ON"
-                : "○ Automatic watermarking is OFF");
+                ? "● Automatic text watermarking is ON"
+                : "○ Automatic text watermarking is OFF");
         serviceState.setTextColor(enabled
                 ? Color.rgb(118, 232, 166)
                 : Color.rgb(255, 184, 92));
