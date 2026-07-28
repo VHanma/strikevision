@@ -50,19 +50,36 @@ public class GhostSignAccessibilityService extends AccessibilityService {
 
                 String customSignature = getSharedPreferences("ghostsign", MODE_PRIVATE)
                         .getString("custom_signature", "");
+                int opacity = getSharedPreferences("ghostsign", MODE_PRIVATE)
+                        .getInt("signature_opacity", 0);
                 if (GhostWatermark.customSignatureByteCount(customSignature)
                         > GhostWatermark.MAX_CUSTOM_SIGNATURE_BYTES) {
                     return;
                 }
 
-                if (GhostWatermark.hasWatermark(raw)) {
-                    GhostWatermark.Verification existing = GhostWatermark.verify(raw);
-                    if (existing.valid && customSignature.equals(existing.customSignature)) {
-                        return;
-                    }
+                GhostWatermark.Verification existing = GhostWatermark.hasWatermark(raw)
+                        ? GhostWatermark.verify(raw)
+                        : null;
+                if (existing != null && existing.valid
+                        && !existing.customSignature.isEmpty()) {
+                    visible = removeTrailingSignature(visible, existing.customSignature);
+                } else {
+                    visible = removeTrailingSignature(visible, customSignature);
                 }
 
-                String signed = GhostWatermark.sign(visible, customSignature);
+                String desiredVisible = visible;
+                if (opacity > 0 && !customSignature.isEmpty()) {
+                    desiredVisible = visible + "\n" + customSignature;
+                }
+
+                if (existing != null
+                        && existing.valid
+                        && customSignature.equals(existing.customSignature)
+                        && desiredVisible.equals(GhostWatermark.stripWatermarks(raw))) {
+                    return;
+                }
+
+                String signed = GhostWatermark.sign(desiredVisible, customSignature);
                 Bundle textArguments = new Bundle();
                 textArguments.putCharSequence(
                         AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
@@ -112,6 +129,17 @@ public class GhostSignAccessibilityService extends AccessibilityService {
     protected void onServiceConnected() {
         super.onServiceConnected();
         handler.removeCallbacks(signFocusedField);
+    }
+
+    private String removeTrailingSignature(String text, String signature) {
+        if (text == null || signature == null || signature.isEmpty()) {
+            return text == null ? "" : text;
+        }
+        String suffix = "\n" + signature;
+        if (text.endsWith(suffix)) {
+            return text.substring(0, text.length() - suffix.length());
+        }
+        return text;
     }
 
     private boolean containsSendControl(AccessibilityNodeInfo node, int depth) {
