@@ -39,9 +39,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat qpsi-contact/source/part-*.b64 > QPsiContact_Source.zip.b64
+          cat qpsi-contact/source/fixed-*.b64 > QPsiContact_Source.zip.b64
           base64 --decode QPsiContact_Source.zip.b64 > QPsiContact_Source.zip
-          echo "09255cd70803708e8c2f992546314bc1fe016a914f316c306ea6a32d24a908eb  QPsiContact_Source.zip" | sha256sum -c -
+          echo "97fef1c33377289dfce3284b488aaddafefaab7a67c184d7d3565f4aead1dd99  QPsiContact_Source.zip" | sha256sum -c -
           rm -rf qpsi-contact/build
           mkdir -p qpsi-contact/build
           unzip -q QPsiContact_Source.zip -d qpsi-contact/build
