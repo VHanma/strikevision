@@ -56,7 +56,30 @@ jobs:
         shell: bash
         run: |
           cd qpsi-contact/build
-          patch -p0 < ../apex_power.patch
+          patch -p0 --forward --reject-file=- < ../apex_power.patch || true
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("qpsi_project/app/src/main/java/com/aether/qpsicontact/MainActivity.kt")
+          text = path.read_text()
+
+          if "import android.content.Context\n" not in text:
+              text = text.replace(
+                  "package com.aether.qpsicontact\n\n",
+                  "package com.aether.qpsicontact\n\nimport android.content.Context\n",
+                  1,
+              )
+          if "import android.os.VibrationEffect\n" not in text:
+              text = text.replace(
+                  "import android.os.SystemClock\n",
+                  "import android.os.SystemClock\nimport android.os.VibrationEffect\nimport android.os.Vibrator\n",
+                  1,
+              )
+
+          path.write_text(text)
+          for reject in Path(".").rglob("*.rej"):
+              reject.unlink()
+          PY
 
       - name: Build installable APK
         shell: bash
