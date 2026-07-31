@@ -1,0 +1,69 @@
+name: Build Q Psi Contact APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'qpsi-contact/**'
+      - '.github/workflows/build-qpsi-contact.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-qpsi-contact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Reconstruct source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat qpsi-contact/source/part-*.b64 > QPsiContact_Source.zip.b64
+          base64 --decode QPsiContact_Source.zip.b64 > QPsiContact_Source.zip
+          echo "09255cd70803708e8c2f992546314bc1fe016a914f316c306ea6a32d24a908eb  QPsiContact_Source.zip" | sha256sum -c -
+          rm -rf qpsi-contact/build
+          mkdir -p qpsi-contact/build
+          unzip -q QPsiContact_Source.zip -d qpsi-contact/build
+
+      - name: Build installable APK
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle -p qpsi-contact/build/qpsi_project --no-daemon clean assembleDebug --stacktrace 2>&1 | tee qpsi-contact-build.log
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p qpsi-contact-output
+          cp qpsi-contact/build/qpsi_project/app/build/outputs/apk/debug/app-debug.apk qpsi-contact-output/Q-Psi-Contact.apk
+          sha256sum qpsi-contact-output/Q-Psi-Contact.apk > qpsi-contact-output/Q-Psi-Contact.apk.sha256
+          cp qpsi-contact-build.log qpsi-contact-output/build.log
+
+      - name: Upload installable APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Q-Psi-Contact-installable-apk
+          path: qpsi-contact-output/*
+          if-no-files-found: warn
