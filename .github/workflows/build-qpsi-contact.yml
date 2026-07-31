@@ -69,6 +69,9 @@ jobs:
                   "package com.aether.qpsicontact\n\nimport android.content.Context\n",
                   1,
               )
+          if "import android.os.Build\n" not in text:
+              anchor = "import android.content.Context\n"
+              text = text.replace(anchor, anchor + "import android.os.Build\n", 1)
           if "import android.os.VibrationEffect\n" not in text:
               text = text.replace(
                   "import android.os.SystemClock\n",
