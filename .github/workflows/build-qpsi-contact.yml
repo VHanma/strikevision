@@ -52,6 +52,12 @@ jobs:
           cd qpsi-contact/build
           python ../apply_fullscreen_patch.py
 
+      - name: Apply Apex power patch
+        shell: bash
+        run: |
+          cd qpsi-contact/build
+          patch -p0 < ../apex_power.patch
+
       - name: Build installable APK
         shell: bash
         run: |
@@ -62,14 +68,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p qpsi-contact-output
-          cp qpsi-contact/build/qpsi_project/app/build/outputs/apk/debug/app-debug.apk qpsi-contact-output/Q-Psi-Contact-Fullscreen.apk
-          sha256sum qpsi-contact-output/Q-Psi-Contact-Fullscreen.apk > qpsi-contact-output/Q-Psi-Contact-Fullscreen.apk.sha256
+          cp qpsi-contact/build/qpsi_project/app/build/outputs/apk/debug/app-debug.apk qpsi-contact-output/Q-Psi-Contact-Apex.apk
+          sha256sum qpsi-contact-output/Q-Psi-Contact-Apex.apk > qpsi-contact-output/Q-Psi-Contact-Apex.apk.sha256
           cp qpsi-contact-build.log qpsi-contact-output/build.log
 
       - name: Upload installable APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Q-Psi-Contact-fullscreen-apk
+          name: Q-Psi-Contact-apex-apk
           path: qpsi-contact-output/*
           if-no-files-found: warn
