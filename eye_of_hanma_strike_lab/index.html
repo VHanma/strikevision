@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0b0b" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="description" content="Camera-based punch speed and strike analysis lab." />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="./styles.css" />
+  <title>Eye of Hanma: Strike Lab</title>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <button class="brand" data-nav="home" aria-label="Home">
+        <span class="brand-eye">◉</span>
+        <span><b>EYE OF HANMA</b><small>STRIKE LAB</small></span>
+      </button>
+      <div class="status-dot-wrap"><span id="modelDot" class="status-dot"></span><span id="modelText">MODEL OFF</span></div>
+    </header>
+
+    <main>
+      <section id="screen-home" class="screen active">
+        <div class="hero">
+          <div class="eyebrow">CAMERA STRIKE ANALYSIS</div>
+          <h1>MEASURE THE<br/><span>PUNCH.</span></h1>
+          <p>Front-camera tracking. Real MPH. Punch events, not random arm motion.</p>
+          <button class="primary giant" id="quickStart">START CAMERA</button>
+        </div>
+
+        <div class="stat-strip">
+          <div><small>PERSONAL BEST</small><strong id="homeBest">--</strong><span>MPH</span></div>
+          <div><small>LAST STRIKE</small><strong id="homeLast">--</strong><span>MPH</span></div>
+          <div><small>PROFILE</small><strong id="profileState">SET</strong><span id="homeWeight">150 LB</span></div>
+        </div>
+
+        <div class="section-title"><span>TRAINING MODES</span><small>7 SYSTEMS</small></div>
+        <div class="mode-grid">
+          <button class="mode-card" data-mode="single"><b>01</b><h3>SINGLE PUNCH</h3><p>5-count. One clean strike. Freeze the result.</p></button>
+          <button class="mode-card" data-mode="speed"><b>02</b><h3>SPEED TEST</h3><p>5 / 10 / 15 sec. Fastest, average, punch count.</p></button>
+          <button class="mode-card" data-mode="combo"><b>03</b><h3>COMBO MODE</h3><p>Continuous valid-punch counter and hand mix.</p></button>
+          <button class="mode-card" data-mode="reaction"><b>04</b><h3>REACTION</h3><p>Random GO cue to punch-onset reaction time.</p></button>
+          <button class="mode-card" data-mode="technique"><b>05</b><h3>TECHNIQUE</h3><p>Live skeleton and kinetic-chain timing readout.</p></button>
+          <button class="mode-card" data-nav="records"><b>06</b><h3>RECORDS</h3><p>History, PRs, types, sides and force estimates.</p></button>
+          <button class="mode-card accent-card" data-nav="settings"><b>07</b><h3>ACCURACY LAB</h3><p>Calibration, thresholds, smoothing and debug.</p></button>
+        </div>
+      </section>
+
+      <section id="screen-camera" class="screen camera-screen">
+        <div class="camera-shell">
+          <video id="camera" playsinline autoplay muted></video>
+          <canvas id="overlay"></canvas>
+          <div class="scanlines"></div>
+          <div class="camera-vignette"></div>
+
+          <div class="hud top-hud">
+            <div class="hud-chip"><small>TRACK FPS</small><b id="fpsReadout">--</b></div>
+            <div class="hud-chip"><small>CONF</small><b id="confReadout">--</b></div>
+            <div class="hud-chip"><small>STATE</small><b id="stateReadout">IDLE</b></div>
+          </div>
+
+          <div id="bodyGuide" class="body-guide">START CAMERA TO BEGIN</div>
+          <div id="demoBadge" class="demo-badge hidden">DEMO SIMULATION</div>
+          <div id="countdown" class="countdown hidden"></div>
+          <div id="goCue" class="go-cue hidden">GO</div>
+
+          <div id="liveMetrics" class="live-metrics">
+            <div><small>LIVE</small><strong id="liveSpeed">0.0</strong><span>MPH</span></div>
+            <div><small>PEAK</small><strong id="livePeak">0.0</strong><span>MPH</span></div>
+            <div><small>PUNCHES</small><strong id="liveCount">0</strong><span>VALID</span></div>
+          </div>
+
+          <div id="debugPanel" class="debug-panel hidden">
+            <div>RAW <b id="debugRaw">0.0</b> mph</div>
+            <div>SMOOTH <b id="debugSmooth">0.0</b> mph</div>
+            <div>ACCEL <b id="debugAccel">0</b> mph/s</div>
+            <div>DISP <b id="debugDisp">0.0</b> in</div>
+            <div>HAND <b id="debugHand">--</b></div>
+          </div>
+
+          <div class="camera-bottom">
+            <div class="mode-head">
+              <div><small>ACTIVE MODE</small><h2 id="activeModeName">SINGLE PUNCH</h2></div>
+              <button id="collapseHud" class="icon-btn">⌄</button>
+            </div>
+            <div id="durationPicker" class="segmented hidden">
+              <button data-duration="5">5S</button><button data-duration="10" class="selected">10S</button><button data-duration="15">15S</button>
+            </div>
+            <div class="camera-actions">
+              <button class="secondary" data-nav="home">BACK</button>
+              <button class="primary" id="startTest">START TEST</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="screen-result" class="screen">
+        <div class="result-wrap">
+          <div class="eyebrow" id="resultEyebrow">VALID STRIKE CAPTURED</div>
+          <div id="prBadge" class="pr-badge hidden">NEW PERSONAL RECORD</div>
+          <div class="result-speed"><strong id="resultMph">0.0</strong><span>MPH</span></div>
+          <div class="result-sub"><span id="resultFps">0.0 ft/s</span><span>•</span><span id="resultType">PUNCH</span><span>•</span><span id="resultSide">--</span></div>
+          <canvas id="sparkline" width="700" height="180"></canvas>
+
+          <div class="metric-grid">
+            <div class="metric"><small>EST. FORCE</small><b id="resultForce">--</b><span>LBF</span></div>
+            <div class="metric"><small>ENERGY</small><b id="resultEnergy">--</b><span>FT-LB</span></div>
+            <div class="metric"><small>MOMENTUM</small><b id="resultMomentum">--</b><span>LB·S</span></div>
+            <div class="metric"><small>TRACK QUALITY</small><b id="resultQuality">--</b><span id="resultConfidence">-- CONF</span></div>
+          </div>
+
+          <div id="reactionResult" class="reaction-result hidden"><small>REACTION TIME</small><b id="reactionMs">--</b><span>MS</span></div>
+
+          <details class="why">
+            <summary>WHY THIS SCORE?</summary>
+            <div id="whyBody"></div>
+          </details>
+
+          <div class="result-actions">
+            <button class="secondary" data-nav="home">HOME</button>
+            <button class="primary" id="againBtn">PUNCH AGAIN</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="screen-records" class="screen">
+        <div class="page-head"><div><small>LOCAL HISTORY</small><h1>RECORDS</h1></div><button class="secondary" data-nav="home">BACK</button></div>
+        <div class="record-summary">
+          <div><small>BEST</small><b id="recordsBest">--</b><span>MPH</span></div>
+          <div><small>STRIKES</small><b id="recordsCount">0</b><span>VALID</span></div>
+        </div>
+        <div id="recordsList" class="records-list"></div>
+        <button id="clearRecords" class="danger">CLEAR HISTORY</button>
+      </section>
+
+      <section id="screen-settings" class="screen">
+        <div class="page-head"><div><small>TUNING / CALIBRATION</small><h1>ACCURACY LAB</h1></div><button class="secondary" data-nav="home">BACK</button></div>
+
+        <div class="settings-card">
+          <h3>PROFILE</h3>
+          <label>Body weight <div><input id="weightLb" type="number" min="70" max="450" step="1"/><span>LB</span></div></label>
+          <label>Stance <select id="stance"><option value="orthodox">Orthodox</option><option value="southpaw">Southpaw</option><option value="square">Square</option></select></label>
+          <label>Left arm reach <div><input id="leftReach" type="number" min="15" max="60" step="0.1"/><span>IN</span></div></label>
+          <label>Right arm reach <div><input id="rightReach" type="number" min="15" max="60" step="0.1"/><span>IN</span></div></label>
+          <label>Camera placement <select id="cameraPlacement"><option value="side">Side view</option><option value="front">Front view</option></select></label>
+          <button id="saveProfile" class="primary">SAVE PROFILE</button>
+        </div>
+
+        <div class="settings-card">
+          <h3>DETECTOR</h3>
+          <label>Minimum punch speed <div><input id="minSpeed" type="range" min="3" max="20" step=".5"/><output id="minSpeedOut"></output></div></label>
+          <label>Minimum displacement <div><input id="minDispRatio" type="range" min=".10" max=".60" step=".01"/><output id="minDispOut"></output></div></label>
+          <label>Smoothing <div><input id="smoothing" type="range" min=".05" max=".85" step=".05"/><output id="smoothingOut"></output></div></label>
+          <label>Landmark confidence <div><input id="minConfidence" type="range" min=".3" max=".9" step=".05"/><output id="minConfOut"></output></div></label>
+        </div>
+
+        <div class="settings-card">
+          <h3>POWER ESTIMATE</h3>
+          <label>Effective striking mass <div><input id="massPct" type="range" min="3" max="30" step="1"/><output id="massPctOut"></output></div></label>
+          <label>Impact-time low <div><input id="impactLow" type="number" min=".005" max=".1" step=".001"/><span>S</span></div></label>
+          <label>Impact-time high <div><input id="impactHigh" type="number" min=".005" max=".1" step=".001"/><span>S</span></div></label>
+          <p class="note">Force is an impulse-based estimate. It is not a force-plate measurement.</p>
+        </div>
+
+        <div class="settings-card">
+          <h3>CALIBRATION</h3>
+          <div class="cal-status"><small>PIXEL SCALE</small><b id="scaleStatus">NOT CAPTURED</b></div>
+          <button id="captureScale" class="secondary wide">CAPTURE EXTENDED-ARM SCALE</button>
+          <p class="note">Stand fully in frame, extend one arm straight, then capture. The app maps shoulder-to-wrist image distance to your saved reach.</p>
+        </div>
+
+        <div class="settings-card switches">
+          <label><span><b>DEBUG OVERLAY</b><small>Show raw state-machine data.</small></span><input id="debugToggle" type="checkbox"/></label>
+          <label><span><b>DEMO SIMULATION</b><small>Test the UI when camera/model access is unavailable.</small></span><input id="demoToggle" type="checkbox"/></label>
+        </div>
+
+        <button id="resetSettings" class="danger">RESET ACCURACY SETTINGS</button>
+      </section>
+    </main>
+
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
