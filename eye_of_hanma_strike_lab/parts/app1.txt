@@ -1,0 +1,315 @@
+import {
+  FilesetResolver,
+  PoseLandmarker
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/+esm";
+
+const $ = (selOrId) => {
+  if (typeof selOrId === "string" && (selOrId.startsWith(".") || selOrId.startsWith("#") || selOrId.includes(" "))) {
+    return document.querySelector(selOrId);
+  }
+  return document.getElementById(selOrId);
+};
+const $$ = (sel) => [...document.querySelectorAll(sel)];
+
+const DEFAULT_SETTINGS = {
+  weightLb: 150,
+  stance: "orthodox",
+  leftReachIn: 31,
+  rightReachIn: 26,
+  leftFingerReachIn: 34,
+  rightFingerReachIn: 30,
+  cameraPlacement: "side",
+  minSpeedMph: 6,
+  minDispRatio: 0.22,
+  smoothing: 0.35,
+  minConfidence: 0.55,
+  minAccelMphS: 35,
+  massPct: 12,
+  impactLowS: 0.012,
+  impactHighS: 0.030,
+  debug: false,
+  demo: false,
+  inchesPerPixel: null
+};
+
+const Store = {
+  getSettings() {
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("strikeLabSettings") || "{}") };
+  },
+  saveSettings(v) { localStorage.setItem("strikeLabSettings", JSON.stringify(v)); },
+  getRecords() { return JSON.parse(localStorage.getItem("strikeLabRecords") || "[]"); },
+  saveRecords(v) { localStorage.setItem("strikeLabRecords", JSON.stringify(v.slice(0, 250))); }
+};
+
+let settings = Store.getSettings();
+let poseLandmarker = null;
+let stream = null;
+let running = false;
+let raf = 0;
+let lastVideoTime = -1;
+let lastFrameTs = 0;
+let fpsEMA = 0;
+let activeMode = "single";
+let testRunning = false;
+let testDuration = 10;
+let testTimer = null;
+let reactionGoAt = null;
+let currentSession = [];
+let currentLandmarks = null;
+let debugHidden = false;
+
+const video = $("camera");
+const canvas = $("overlay");
+const ctx = canvas.getContext("2d");
+
+const HAND = {
+  left: { shoulder: 11, elbow: 13, wrist: 15 },
+  right: { shoulder: 12, elbow: 14, wrist: 16 }
+};
+
+const detector = {
+  hands: {
+    left: freshHandState(),
+    right: freshHandState()
+  }
+};
+
+function freshHandState() {
+  return {
+    phase: "READY",
+    lastPos: null,
+    lastVel: 0,
+    smoothVel: 0,
+    accel: 0,
+    onsetTs: 0,
+    peakMph: 0,
+    peakFtS: 0,
+    peakTs: 0,
+    maxDispIn: 0,
+    startPos: null,
+    samples: [],
+    cooldownUntil: 0,
+    lastShoulderDistPx: 0,
+    lastWristShoulderPx: 0,
+    retractionSeen: false,
+    conf: 0
+  };
+}
+
+const modeNames = {
+  single:"SINGLE PUNCH", speed:"SPEED TEST", combo:"COMBO MODE",
+  reaction:"REACTION", technique:"TECHNIQUE"
+};
+
+function showScreen(name) {
+  $$(".screen").forEach(x => x.classList.remove("active"));
+  $(`screen-${name}`).classList.add("active");
+  if (name === "records") renderRecords();
+  if (name === "settings") fillSettings();
+  if (name !== "camera") stopCamera();
+  window.scrollTo({top:0, behavior:"instant"});
+}
+
+$$("[data-nav]").forEach(b => b.addEventListener("click", () => showScreen(b.dataset.nav)));
+
+$$("[data-mode]").forEach(b => b.addEventListener("click", () => {
+  activeMode = b.dataset.mode;
+  openCameraMode();
+}));
+
+$("quickStart").addEventListener("click", () => {
+  activeMode = "single";
+  openCameraMode();
+});
+
+async function openCameraMode() {
+  showScreen("camera");
+  $("activeModeName").textContent = modeNames[activeMode];
+  $("durationPicker").classList.toggle("hidden", activeMode !== "speed");
+  currentSession = [];
+  updateSessionHud();
+  await startCamera();
+}
+
+async function initModel() {
+  if (settings.demo) {
+    modelStatus(false, "DEMO MODE");
+    return false;
+  }
+  if (poseLandmarker) return true;
+  try {
+    modelStatus(false, "LOADING MODEL");
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm"
+    );
+    poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+        delegate: "GPU"
+      },
+      runningMode: "VIDEO",
+      numPoses: 1,
+      minPoseDetectionConfidence: settings.minConfidence,
+      minPosePresenceConfidence: settings.minConfidence,
+      minTrackingConfidence: settings.minConfidence
+    });
+    modelStatus(true, "POSE MODEL ON");
+    return true;
+  } catch (err) {
+    console.error(err);
+    modelStatus(false, "MODEL ERROR");
+    toast("Pose model failed. Demo mode is available in Accuracy Lab.");
+    return false;
+  }
+}
+
+function modelStatus(on, text) {
+  $("modelDot").classList.toggle("on", on);
+  $("modelText").textContent = text;
+}
+
+async function startCamera() {
+  if (settings.demo) {
+    $("demoBadge").classList.remove("hidden");
+    $("bodyGuide").textContent = "DEMO BODY FOUND";
+    modelStatus(false, "DEMO MODE");
+    running = true;
+    startDemoLoop();
+    return;
+  }
+  $("demoBadge").classList.add("hidden");
+  if (!navigator.mediaDevices?.getUserMedia) {
+    $("bodyGuide").textContent = "CAMERA API UNAVAILABLE";
+    return;
+  }
+  try {
+    const modelReady = await initModel();
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "user",
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 60, min: 30 }
+      },
+      audio: false
+    });
+    video.srcObject = stream;
+    video.classList.add("mirror");
+    await video.play();
+    resizeCanvas();
+    running = true;
+    $("bodyGuide").textContent = modelReady ? "MOVE INTO FRAME" : "CAMERA ON / MODEL UNAVAILABLE";
+    raf = requestAnimationFrame(trackLoop);
+  } catch (err) {
+    console.error(err);
+    $("bodyGuide").textContent = "CAMERA PERMISSION DENIED";
+    toast("Camera blocked. Allow permission or turn on Demo Simulation.");
+  }
+}
+
+function stopCamera() {
+  running = false;
+  cancelAnimationFrame(raf);
+  clearInterval(testTimer);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  video.srcObject = null;
+  testRunning = false;
+}
+
+function resizeCanvas() {
+  const r = video.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.max(1, Math.floor(r.width * dpr));
+  canvas.height = Math.max(1, Math.floor(r.height * dpr));
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+window.addEventListener("resize", resizeCanvas);
+
+async function trackLoop(now) {
+  if (!running) return;
+  if (video.readyState >= 2 && video.currentTime !== lastVideoTime && poseLandmarker) {
+    lastVideoTime = video.currentTime;
+    const dt = lastFrameTs ? (now-lastFrameTs)/1000 : 0;
+    lastFrameTs = now;
+    if (dt > 0 && dt < .2) {
+      const f = 1/dt;
+      fpsEMA = fpsEMA ? fpsEMA*.85 + f*.15 : f;
+      $("fpsReadout").textContent = fpsEMA.toFixed(0);
+    }
+    try {
+      const result = poseLandmarker.detectForVideo(video, now);
+      currentLandmarks = result.landmarks?.[0] || null;
+      processPose(currentLandmarks, now, dt);
+      drawPose(currentLandmarks);
+    } catch (e) { console.error(e); }
+  }
+  raf = requestAnimationFrame(trackLoop);
+}
+
+function lmConf(lm) { return Math.min(1, Math.max(0, lm?.visibility ?? lm?.presence ?? 0)); }
+
+function processPose(lms, now, dt) {
+  if (!lms) {
+    $("confReadout").textContent = "--";
+    $("bodyGuide").textContent = "MOVE INTO FRAME";
+    return;
+  }
+  const useful = [11,12,13,14,15,16,23,24].map(i => lmConf(lms[i]));
+  const conf = useful.reduce((a,b)=>a+b,0)/useful.length;
+  $("confReadout").textContent = `${Math.round(conf*100)}%`;
+  $("bodyGuide").textContent = conf >= settings.minConfidence ? "BODY FOUND" : "LOW TRACKING CONFIDENCE";
+  if (conf < settings.minConfidence) return;
+
+  for (const side of ["left","right"]) processHand(side, lms, now, dt);
+  if (activeMode === "technique") drawKineticHint(lms);
+}
+
+function mapPoint(lm) {
+  const r = canvas.getBoundingClientRect();
+  return { x: lm.x * r.width, y: lm.y * r.height, z: lm.z || 0 };
+}
+
+function dist(a,b) { return Math.hypot(a.x-b.x, a.y-b.y); }
+
+function currentInchesPerPixel(side, shoulderPx, wristPx) {
+  if (settings.inchesPerPixel) return settings.inchesPerPixel;
+  const reach = side === "left" ? settings.leftReachIn : settings.rightReachIn;
+  const d = Math.max(shoulderPx && wristPx ? dist(shoulderPx,wristPx) : 0, 1);
+  // Conservative dynamic fallback. True calibration is better.
+  return reach / Math.max(d, 120);
+}
+
+function processHand(side, lms, now, dt) {
+  if (!dt || dt > .15) return;
+  const ids = HAND[side];
+  const wristLm = lms[ids.wrist], shoulderLm = lms[ids.shoulder], elbowLm = lms[ids.elbow];
+  const conf = Math.min(lmConf(wristLm), lmConf(shoulderLm), lmConf(elbowLm));
+  if (conf < settings.minConfidence) return;
+
+  const wrist = mapPoint(wristLm), shoulder = mapPoint(shoulderLm);
+  const s = detector.hands[side];
+  s.conf = conf;
+  const ipp = currentInchesPerPixel(side, shoulder, wrist);
+
+  if (!s.lastPos) {
+    s.lastPos = wrist;
+    s.lastWristShoulderPx = dist(wrist, shoulder);
+    return;
+  }
+
+  const pxPerSec = dist(wrist, s.lastPos) / dt;
+  const inchesPerSec = pxPerSec * ipp;
+  const rawMph = inchesPerSec / 17.6;
+  const alpha = settings.smoothing;
+  const smooth = s.smoothVel ? alpha*rawMph + (1-alpha)*s.smoothVel : rawMph;
+  const accel = (smooth - s.lastVel) / dt;
+  const shoulderDist = dist(wrist, shoulder);
+  const previousShoulderDist = s.lastWristShoulderPx || shoulderDist;
+  const reach = side === "left" ? settings.leftReachIn : settings.rightReachIn;
+  const displacement = s.startPos ? dist(wrist, s.startPos) * ipp : 0;
+
+  s.accel = accel;
+  s.lastVel = smooth;
+  s.smoothVel = smooth;
