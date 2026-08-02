@@ -1,0 +1,202 @@
+        clearInterval(testTimer);
+        testRunning=false;
+        $("startTest").textContent="START TEST";
+        if(currentSession.length) showResult([...currentSession].sort((a,b)=>b.mph-a.mph)[0]);
+        else toast("No valid punch detected.");
+      }
+    },1000);
+  } else if (activeMode === "combo" || activeMode === "technique") {
+    $("startTest").textContent = "STOP";
+  }
+});
+
+async function startReaction() {
+  $("bodyGuide").textContent = "WAIT FOR GO";
+  const wait = 1500 + Math.random()*2500;
+  await new Promise(r=>setTimeout(r,wait));
+  $("goCue").classList.remove("hidden");
+  reactionGoAt=performance.now();
+  detector.hands.left=freshHandState();detector.hands.right=freshHandState();
+  testRunning=true;
+  setTimeout(()=>$("goCue").classList.add("hidden"),380);
+}
+
+function countdown(n) {
+  return new Promise(resolve => {
+    const box=$("countdown");box.classList.remove("hidden");
+    let c=n; box.textContent=c;
+    const t=setInterval(()=>{
+      c--; if(c<=0){clearInterval(t);box.textContent="GO";setTimeout(()=>{box.classList.add("hidden");resolve();},320)}
+      else box.textContent=c;
+    },700);
+  });
+}
+
+$$("[data-duration]").forEach(b=>b.addEventListener("click",()=>{
+  $$("[data-duration]").forEach(x=>x.classList.remove("selected"));
+  b.classList.add("selected"); testDuration=+b.dataset.duration;
+}));
+
+$("collapseHud").addEventListener("click",()=>{
+  debugHidden=!debugHidden;
+  $(".top-hud")?.classList.toggle("hidden",debugHidden);
+  $("liveMetrics").classList.toggle("hidden",debugHidden);
+});
+
+function drawSpark(samples) {
+  const c=$("sparkline"),x=c.getContext("2d"),w=c.width,h=c.height;
+  x.clearRect(0,0,w,h);x.fillStyle="#0d0f0f";x.fillRect(0,0,w,h);
+  if(!samples?.length)return;
+  const max=Math.max(...samples.map(s=>s.v),1);
+  x.strokeStyle="#c7ff19";x.lineWidth=5;x.beginPath();
+  samples.forEach((s,i)=>{
+    const px=(i/(samples.length-1||1))*w;
+    const py=h-14-(s.v/max)*(h-28);
+    i?x.lineTo(px,py):x.moveTo(px,py);
+  });x.stroke();
+  x.strokeStyle="rgba(255,255,255,.15)";x.lineWidth=2;x.beginPath();x.moveTo(0,h-14);x.lineTo(w,h-14);x.stroke();
+}
+
+function showResult(record) {
+  showScreen("result");
+  const previous = Store.getRecords().filter(r=>r.id!==record.id && !r.demo);
+  const oldBest = previous.length ? Math.max(...previous.map(r=>r.mph)) : 0;
+  const isPR = !record.demo && record.mph > oldBest;
+  $("prBadge").classList.toggle("hidden",!isPR);
+  $("resultEyebrow").textContent = record.demo ? "DEMO STRIKE • NOT A LIVE MEASUREMENT" : "VALID STRIKE CAPTURED";
+  $("resultMph").textContent=record.mph.toFixed(1);
+  $("resultFps").textContent=`${record.ftS.toFixed(1)} ft/s`;
+  $("resultType").textContent=record.type;
+  $("resultSide").textContent=record.side.toUpperCase();
+  $("resultForce").textContent=`${Math.round(record.forceLow)}–${Math.round(record.forceHigh)}`;
+  $("resultEnergy").textContent=record.energyFtLb.toFixed(1);
+  $("resultMomentum").textContent=record.momentumLbS.toFixed(2);
+  $("resultQuality").textContent=record.quality;
+  $("resultConfidence").textContent=`${Math.round(record.confidence*100)}% CONF`;
+  $("reactionResult").classList.toggle("hidden",record.reactionMs==null);
+  if(record.reactionMs!=null)$("reactionMs").textContent=record.reactionMs;
+  $("whyBody").innerHTML=`
+    Peak fist speed came from the highest smoothed wrist velocity during one complete punch event.
+    The event traveled about <b>${record.displacementIn}"</b> and tracking confidence was <b>${Math.round(record.confidence*100)}%</b>.
+    Force uses <b>${record.effectiveWeightLb} lb</b> effective striking weight (${settings.massPct}% of body weight) and an impact-time window of
+    <b>${settings.impactLowS.toFixed(3)}–${settings.impactHighS.toFixed(3)} s</b>. It is an impulse-based estimate, not a sensor-measured impact force.
+    ${record.demo?'<br/><br/><b>DEMO:</b> these numbers were simulated to test the interface.':''}`;
+  drawSpark(record.samples);
+  $("againBtn").onclick=()=>{activeMode=record.mode;openCameraMode()};
+}
+
+function renderRecords() {
+  const recs=Store.getRecords();
+  $("recordsCount").textContent=recs.length;
+  $("recordsBest").textContent=recs.length?Math.max(...recs.filter(r=>!r.demo).map(r=>r.mph),0).toFixed(1):"--";
+  $("recordsList").innerHTML=recs.length?recs.map(r=>`
+    <div class="record">
+      <div class="record-speed">${r.mph.toFixed(1)}<small>MPH</small></div>
+      <div><h4>${r.demo?"DEMO • ":""}${r.type} • ${r.side.toUpperCase()}</h4><p>${r.mode.toUpperCase()} • ${r.forceLow.toFixed(0)}–${r.forceHigh.toFixed(0)} LBF • ${r.quality}</p></div>
+      <time>${new Date(r.at).toLocaleDateString()}<br/>${new Date(r.at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</time>
+    </div>`).join(""):`<div class="settings-card"><p class="note">No strikes saved yet.</p></div>`;
+}
+
+$("clearRecords").addEventListener("click",()=>{
+  if(confirm("Clear all local strike records?")){Store.saveRecords([]);renderRecords();updateHome()}
+});
+
+function fillSettings() {
+  settings=Store.getSettings();
+  $("weightLb").value=settings.weightLb;$("stance").value=settings.stance;
+  $("leftReach").value=settings.leftReachIn;$("rightReach").value=settings.rightReachIn;
+  $("cameraPlacement").value=settings.cameraPlacement;
+  $("minSpeed").value=settings.minSpeedMph;$("minDispRatio").value=settings.minDispRatio;
+  $("smoothing").value=settings.smoothing;$("minConfidence").value=settings.minConfidence;
+  $("massPct").value=settings.massPct;$("impactLow").value=settings.impactLowS;$("impactHigh").value=settings.impactHighS;
+  $("debugToggle").checked=settings.debug;$("demoToggle").checked=settings.demo;
+  $("scaleStatus").textContent=settings.inchesPerPixel?`${settings.inchesPerPixel.toFixed(4)} IN/PX`:"NOT CAPTURED";
+  updateOutputs();
+}
+
+function updateOutputs(){
+  $("minSpeedOut").textContent=`${(+$("minSpeed").value).toFixed(1)} MPH`;
+  $("minDispOut").textContent=`${Math.round(+$("minDispRatio").value*100)}% REACH`;
+  $("smoothingOut").textContent=(+$("smoothing").value).toFixed(2);
+  $("minConfOut").textContent=`${Math.round(+$("minConfidence").value*100)}%`;
+  $("massPctOut").textContent=`${$("massPct").value}%`;
+}
+$$("#screen-settings input[type=\"range\"]").forEach(x=>x.addEventListener("input",updateOutputs));
+
+$("saveProfile").addEventListener("click",saveAllSettings);
+$$("#screen-settings input,#screen-settings select").forEach(x=>x.addEventListener("change",()=>{
+  if(["demoToggle","debugToggle"].includes(x.id)) saveAllSettings();
+}));
+
+function saveAllSettings() {
+  settings={
+    ...settings,
+    weightLb:+$("weightLb").value,
+    stance:$("stance").value,
+    leftReachIn:+$("leftReach").value,
+    rightReachIn:+$("rightReach").value,
+    cameraPlacement:$("cameraPlacement").value,
+    minSpeedMph:+$("minSpeed").value,
+    minDispRatio:+$("minDispRatio").value,
+    smoothing:+$("smoothing").value,
+    minConfidence:+$("minConfidence").value,
+    massPct:+$("massPct").value,
+    impactLowS:+$("impactLow").value,
+    impactHighS:+$("impactHigh").value,
+    debug:$("debugToggle").checked,
+    demo:$("demoToggle").checked
+  };
+  Store.saveSettings(settings);
+  $("debugPanel").classList.toggle("hidden",!settings.debug);
+  toast("Accuracy settings saved.");
+  updateHome();
+}
+
+$("captureScale").addEventListener("click", async ()=>{
+  saveAllSettings();
+  if(!currentLandmarks){
+    toast("Open a camera mode first, stand in frame, then return and capture.");
+    return;
+  }
+  const l=currentLandmarks;
+  let best=null;
+  for(const side of ["left","right"]){
+    const ids=HAND[side],a=mapPoint(l[ids.shoulder]),b=mapPoint(l[ids.wrist]);
+    const px=dist(a,b), conf=Math.min(lmConf(l[ids.shoulder]),lmConf(l[ids.wrist]));
+    if(conf>=settings.minConfidence && (!best||px>best.px)) best={side,px};
+  }
+  if(!best){toast("Could not see an extended arm clearly.");return}
+  const reach=best.side==="left"?settings.leftReachIn:settings.rightReachIn;
+  settings.inchesPerPixel=reach/best.px;
+  Store.saveSettings(settings);
+  $("scaleStatus").textContent=`${settings.inchesPerPixel.toFixed(4)} IN/PX`;
+  toast(`${best.side.toUpperCase()} arm scale captured.`);
+});
+
+$("resetSettings").addEventListener("click",()=>{
+  settings={...DEFAULT_SETTINGS};Store.saveSettings(settings);fillSettings();toast("Accuracy settings reset.");
+});
+
+function updateHome() {
+  settings=Store.getSettings();
+  const recs=Store.getRecords();
+  const liveRecs=recs.filter(r=>!r.demo);
+  $("homeBest").textContent=liveRecs.length?Math.max(...liveRecs.map(r=>r.mph)).toFixed(1):"--";
+  $("homeLast").textContent=liveRecs.length?liveRecs[0].mph.toFixed(1):"--";
+  $("homeWeight").textContent=`${settings.weightLb} LB`;
+  $("profileState").textContent=settings.inchesPerPixel?"CAL":"SET";
+  $("debugPanel").classList.toggle("hidden",!settings.debug);
+}
+
+function toast(msg){
+  const t=$("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2200);
+}
+
+// Register PWA shell.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(console.warn));
+}
+
+updateHome();
+fillSettings();
+showScreen("home");
