@@ -1,0 +1,259 @@
+  s.lastPos = wrist;
+  s.lastWristShoulderPx = shoulderDist;
+
+  const primary = detector.hands.left.smoothVel >= detector.hands.right.smoothVel ? "left":"right";
+  if (side === primary) {
+    $("liveSpeed").textContent = smooth.toFixed(1);
+    $("stateReadout").textContent = s.phase;
+    $("debugRaw").textContent = rawMph.toFixed(1);
+    $("debugSmooth").textContent = smooth.toFixed(1);
+    $("debugAccel").textContent = accel.toFixed(0);
+    $("debugDisp").textContent = displacement.toFixed(1);
+    $("debugHand").textContent = side.toUpperCase();
+  }
+
+  if (!testRunning && activeMode !== "technique") return;
+  if (now < s.cooldownUntil) return;
+
+  switch (s.phase) {
+    case "READY":
+      if (smooth >= settings.minSpeedMph && accel >= settings.minAccelMphS) {
+        s.phase = "ONSET";
+        s.onsetTs = now;
+        s.peakMph = smooth;
+        s.peakFtS = smooth * 1.4666667;
+        s.peakTs = now;
+        s.startPos = { ...wrist };
+        s.maxDispIn = 0;
+        s.samples = [{t:0,v:smooth}];
+        s.retractionSeen = false;
+      }
+      break;
+
+    case "ONSET":
+    case "ACCELERATING":
+      s.phase = "ACCELERATING";
+      s.samples.push({t:now-s.onsetTs,v:smooth});
+      s.maxDispIn = Math.max(s.maxDispIn, displacement);
+      if (smooth > s.peakMph) {
+        s.peakMph = smooth; s.peakFtS = smooth*1.4666667; s.peakTs = now;
+      }
+      if (now - s.onsetTs > 850 || smooth < settings.minSpeedMph*.45) {
+        resetHand(s);
+      } else if (now - s.peakTs > 45 && s.peakMph >= settings.minSpeedMph && s.maxDispIn >= reach*settings.minDispRatio) {
+        s.phase = "PEAK";
+      }
+      break;
+
+    case "PEAK":
+      s.samples.push({t:now-s.onsetTs,v:smooth});
+      s.maxDispIn = Math.max(s.maxDispIn, displacement);
+      s.phase = "EXTENSION";
+      break;
+
+    case "EXTENSION":
+      s.samples.push({t:now-s.onsetTs,v:smooth});
+      // Retraction signal: wrist-to-shoulder distance decreases after extension.
+      if (shoulderDist < previousShoulderDist * .985 || smooth < s.peakMph*.35) {
+        s.phase = "RETRACTION";
+        s.retractionSeen = true;
+      }
+      if (now - s.onsetTs > 1200) resetHand(s);
+      break;
+
+    case "RETRACTION":
+      s.samples.push({t:now-s.onsetTs,v:smooth});
+      emitPunch(side, s, lms);
+      s.phase = "COOLDOWN";
+      s.cooldownUntil = now + 260;
+      setTimeout(() => resetHand(s), 270);
+      break;
+  }
+
+  if (s.phase !== "READY") {
+    s.samples.push({t:now-s.onsetTs,v:smooth});
+    if (s.samples.length > 90) s.samples.shift();
+  }
+}
+
+function resetHand(s) {
+  const keepVel = s.smoothVel;
+  Object.assign(s, freshHandState());
+  s.smoothVel = keepVel * .2;
+}
+
+function classifyPunch(side, lms, samples) {
+  const ids = HAND[side];
+  const shoulder = mapPoint(lms[ids.shoulder]);
+  const wrist = mapPoint(lms[ids.wrist]);
+  const elbow = mapPoint(lms[ids.elbow]);
+  const dx = Math.abs(wrist.x - shoulder.x);
+  const dy = wrist.y - shoulder.y;
+  const elbowDx = Math.abs(elbow.x - shoulder.x);
+  if (dy < -40 && Math.abs(dy) > dx*.65) return "UPPERCUT";
+  if (elbowDx > dx*.6 && Math.abs(dy) < dx*.75) return "HOOK";
+  if (dx + Math.abs(dy) > 55) {
+    if (settings.stance === "orthodox") return side === "left" ? "JAB" : "CROSS";
+    if (settings.stance === "southpaw") return side === "right" ? "JAB" : "CROSS";
+    return "STRAIGHT";
+  }
+  return "PUNCH";
+}
+
+function estimatePower(mph) {
+  const ftS = mph * 1.4666667;
+  const effectiveWeightLb = settings.weightLb * (settings.massPct/100);
+  const massSlugs = effectiveWeightLb / 32.174;
+  const momentumLbS = massSlugs * ftS;
+  const energyFtLb = 0.5 * massSlugs * ftS * ftS;
+  const lowTime = Math.min(settings.impactLowS, settings.impactHighS);
+  const highTime = Math.max(settings.impactLowS, settings.impactHighS);
+  // Smaller impact time => higher impulse-based force estimate.
+  const forceLow = momentumLbS / highTime;
+  const forceHigh = momentumLbS / lowTime;
+  return { ftS, momentumLbS, energyFtLb, forceLow, forceHigh, effectiveWeightLb };
+}
+
+function quality(conf, peak, displacement, side) {
+  const reach = side === "left" ? settings.leftReachIn : settings.rightReachIn;
+  let score = conf*55 + Math.min(25, peak/20*25) + Math.min(20, displacement/(reach*.45)*20);
+  if (score >= 88) return "A+";
+  if (score >= 78) return "A";
+  if (score >= 67) return "B";
+  if (score >= 55) return "C";
+  return "CHECK";
+}
+
+function emitPunch(side, s, lms) {
+  if (!testRunning && activeMode !== "technique") return;
+  const type = classifyPunch(side, lms, s.samples);
+  const power = estimatePower(s.peakMph);
+  const record = {
+    id: crypto.randomUUID?.() || String(Date.now()+Math.random()),
+    at: new Date().toISOString(),
+    mode: activeMode,
+    side,
+    type,
+    mph: +s.peakMph.toFixed(2),
+    ftS: +power.ftS.toFixed(2),
+    forceLow: +power.forceLow.toFixed(0),
+    forceHigh: +power.forceHigh.toFixed(0),
+    energyFtLb: +power.energyFtLb.toFixed(1),
+    momentumLbS: +power.momentumLbS.toFixed(2),
+    confidence: +s.conf.toFixed(2),
+    quality: quality(s.conf, s.peakMph, s.maxDispIn, side),
+    displacementIn: +s.maxDispIn.toFixed(1),
+    effectiveWeightLb: +power.effectiveWeightLb.toFixed(1),
+    samples: s.samples.filter((_,i)=>i%2===0).slice(-48),
+    reactionMs: activeMode === "reaction" && reactionGoAt ? Math.max(0, Math.round(s.onsetTs - reactionGoAt)) : null,
+    demo: settings.demo
+  };
+  currentSession.push(record);
+  persistRecord(record);
+  updateSessionHud();
+
+  if (activeMode === "single" || activeMode === "reaction") {
+    testRunning = false;
+    showResult(record);
+  }
+}
+
+function persistRecord(record) {
+  const recs = Store.getRecords();
+  recs.unshift(record);
+  Store.saveRecords(recs);
+  updateHome();
+}
+
+function updateSessionHud() {
+  const speeds = currentSession.map(x=>x.mph);
+  $("liveCount").textContent = String(currentSession.length);
+  $("livePeak").textContent = speeds.length ? Math.max(...speeds).toFixed(1) : "0.0";
+}
+
+function drawPose(lms) {
+  const r = canvas.getBoundingClientRect();
+  ctx.clearRect(0,0,r.width,r.height);
+  if (!lms) return;
+  const pairs = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24]];
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(199,255,25,.75)";
+  for (const [a,b] of pairs) {
+    if (lmConf(lms[a]) < settings.minConfidence || lmConf(lms[b]) < settings.minConfidence) continue;
+    const p1=mapPoint(lms[a]),p2=mapPoint(lms[b]);
+    // Canvas overlay itself is not mirrored, mirror X to align with selfie preview.
+    p1.x = r.width-p1.x; p2.x = r.width-p2.x;
+    ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+  }
+  for (const i of [11,12,13,14,15,16,23,24]) {
+    if (lmConf(lms[i]) < settings.minConfidence) continue;
+    const p=mapPoint(lms[i]); p.x=r.width-p.x;
+    ctx.fillStyle = i===15||i===16 ? "#f5f7f4" : "#c7ff19";
+    ctx.beginPath();ctx.arc(p.x,p.y,i===15||i===16?5:3,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function drawKineticHint(lms) {
+  const hipL=mapPoint(lms[23]),hipR=mapPoint(lms[24]),shL=mapPoint(lms[11]),shR=mapPoint(lms[12]);
+  const hipAngle=Math.atan2(hipR.y-hipL.y,hipR.x-hipL.x);
+  const shAngle=Math.atan2(shR.y-shL.y,shR.x-shL.x);
+  const separation=Math.abs((shAngle-hipAngle)*180/Math.PI);
+  $("bodyGuide").textContent = `TECHNIQUE • HIP/SHOULDER SEP ${separation.toFixed(0)}°`;
+}
+
+function startDemoLoop() {
+  lastFrameTs = performance.now();
+  let phase = 0;
+  const fake = () => {
+    if (!running || !settings.demo) return;
+    const now = performance.now();
+    $("fpsReadout").textContent = "60";
+    $("confReadout").textContent = "96%";
+    if (testRunning) {
+      phase += .16;
+      const pulse = Math.max(0, Math.sin(phase))*18;
+      $("liveSpeed").textContent = pulse.toFixed(1);
+      $("stateReadout").textContent = pulse>12?"ACCELERATING":pulse>3?"ONSET":"READY";
+      if (phase > 2.9) {
+        phase = 0;
+        const mph = 12 + Math.random()*8;
+        const fakeState = {
+          peakMph:mph, maxDispIn:11+Math.random()*4, conf:.96,
+          onsetTs:performance.now()-180, samples:Array.from({length:24},(_,i)=>({t:i*14,v:Math.max(0, mph*Math.sin((i/23)*Math.PI))}))
+        };
+        const fakeLms = Array.from({length:33},()=>({x:.5,y:.5,z:0,visibility:.96,presence:.96}));
+        Object.assign(fakeLms[11],{x:.42,y:.42});Object.assign(fakeLms[13],{x:.32,y:.46});Object.assign(fakeLms[15],{x:.18,y:.45});
+        Object.assign(fakeLms[12],{x:.58,y:.42});Object.assign(fakeLms[14],{x:.65,y:.47});Object.assign(fakeLms[16],{x:.72,y:.49});
+        emitPunch(Math.random()>.5?"left":"right",fakeState,fakeLms);
+      }
+    }
+    raf=requestAnimationFrame(fake);
+  };
+  raf=requestAnimationFrame(fake);
+}
+
+$("startTest").addEventListener("click", async () => {
+  if (testRunning && (activeMode === "combo" || activeMode === "technique")) {
+    testRunning = false;
+    $("startTest").textContent = "START TEST";
+    $("bodyGuide").textContent = "SESSION PAUSED";
+    return;
+  }
+  if (!running) await startCamera();
+  currentSession = [];
+  updateSessionHud();
+  reactionGoAt = null;
+  if (activeMode === "reaction") return startReaction();
+  await countdown(5);
+  testRunning = true;
+  detector.hands.left = freshHandState();
+  detector.hands.right = freshHandState();
+
+  if (activeMode === "speed") {
+    let remain = testDuration;
+    $("startTest").textContent = `${remain}s`;
+    clearInterval(testTimer);
+    testTimer=setInterval(()=>{
+      remain--;
+      $("startTest").textContent=`${remain}s`;
+      if(remain<=0){
