@@ -35,36 +35,60 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Reconstruct and build APK
+      - name: Reconstruct, build, and publish diagnostics
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
           rm -rf watermark-studio-build watermark-studio-apk WatermarkStudio-source.zip
           mkdir -p watermark-studio-build watermark-studio-apk
-          cat watermark-studio-source/part-*.b64 | base64 --decode > WatermarkStudio-source.zip
-          unzip -q WatermarkStudio-source.zip -d watermark-studio-build
-          cd watermark-studio-build/WatermarkStudio
-          gradle --no-daemon clean assembleDebug --stacktrace
-          cd ../..
-          cp watermark-studio-build/WatermarkStudio/app/build/outputs/apk/debug/app-debug.apk watermark-studio-apk/WatermarkStudio.apk
-          sha256sum watermark-studio-apk/WatermarkStudio.apk > watermark-studio-apk/WatermarkStudio.apk.sha256
-          echo "SUCCESS" > watermark-studio-apk/BUILD_STATUS.txt
-
-      - name: Publish APK to branch
-        shell: bash
-        run: |
-          set -euo pipefail
+          : > watermark-studio-apk/build.log
+          STATUS=0
+          {
+            echo "=== RECONSTRUCT ==="
+            cat watermark-studio-source/part-*.b64 | base64 --decode > WatermarkStudio-source.zip
+            RECON=$?
+            echo "reconstruct_status=$RECON"
+            if [ "$RECON" -eq 0 ]; then
+              unzip -t WatermarkStudio-source.zip
+              ZIPTEST=$?
+              echo "zip_test_status=$ZIPTEST"
+              if [ "$ZIPTEST" -eq 0 ]; then
+                unzip -q WatermarkStudio-source.zip -d watermark-studio-build
+                cd watermark-studio-build/WatermarkStudio
+                echo "=== GRADLE BUILD ==="
+                gradle --no-daemon clean assembleDebug --stacktrace
+                STATUS=$?
+                cd ../..
+              else
+                STATUS=$ZIPTEST
+              fi
+            else
+              STATUS=$RECON
+            fi
+          } 2>&1 | tee watermark-studio-apk/build.log
+          PIPE_STATUS=${PIPESTATUS[0]}
+          if [ "${STATUS:-$PIPE_STATUS}" -eq 0 ] && [ -f watermark-studio-build/WatermarkStudio/app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp watermark-studio-build/WatermarkStudio/app/build/outputs/apk/debug/app-debug.apk watermark-studio-apk/WatermarkStudio.apk
+            sha256sum watermark-studio-apk/WatermarkStudio.apk > watermark-studio-apk/WatermarkStudio.apk.sha256
+            echo "SUCCESS" > watermark-studio-apk/BUILD_STATUS.txt
+            FINAL=0
+          else
+            echo "FAILED status=${STATUS:-$PIPE_STATUS}" > watermark-studio-apk/BUILD_STATUS.txt
+            FINAL=${STATUS:-$PIPE_STATUS}
+          fi
           git config user.name "Watermark Studio Builder"
           git config user.email "actions@github.com"
           git add watermark-studio-apk
           if ! git diff --cached --quiet; then
-            git commit -m "Publish Watermark Studio APK [skip ci]"
+            git commit -m "Publish Watermark Studio build result [skip ci]"
             git push origin HEAD:watermark-studio
           fi
+          exit "$FINAL"
 
-      - name: Upload APK artifact
+      - name: Upload backup result
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: WatermarkStudio-APK
+          name: WatermarkStudio-build-result
           path: watermark-studio-apk/*
           if-no-files-found: error
