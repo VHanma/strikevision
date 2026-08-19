@@ -1,0 +1,30 @@
+=== RECONSTRUCT ===
+reconstruct_status=0
+Archive:  WatermarkStudio-source.zip
+    testing: WatermarkStudio/         OK
+    testing: WatermarkStudio/build.gradle   OK
+    testing: WatermarkStudio/README.md   OK
+    testing: WatermarkStudio/app/     OK
+    testing: WatermarkStudio/app/build.gradle   OK
+    testing: WatermarkStudio/app/proguard-rules.pro   OK
+    testing: WatermarkStudio/app/src/   OK
+    testing: WatermarkStudio/app/src/main/   OK
+    testing: WatermarkStudio/app/src/main/AndroidManifest.xml   OK
+    testing: WatermarkStudio/app/src/main/java/   OK
+    testing: WatermarkStudio/app/src/main/java/com/   OK
+    testing: WatermarkStudio/app/src/main/java/com/vaanhanma/   OK
+    testing: WatermarkStudio/app/src/main/java/com/vaanhanma/watermarkstudio/   OK
+    testing: WatermarkStudio/app/src/main/java/com/vaanhanma/watermarkstudio/WatermarkEditorView.java   OK
+    testing: WatermarkStudio/app/src/main/java/com/vaanhanma/watermarkstudio/MainActivity.java   bad CRC 864c1dc8  (should be 81d1ca76)
+    testing: WatermarkStudio/app/src/main/java/com/vaanhanma/watermarkstudio/WatermarkLayer.java   OK
+    testing: WatermarkStudio/app/src/main/res/   OK
+    testing: WatermarkStudio/app/src/main/res/mipmap-hdpi/   OK
+    testing: WatermarkStudio/app/src/main/res/drawable/   OK
+    testing: WatermarkStudio/app/src/main/res/drawable/ic_launcher_foreground.xml   OK
+    testing: WatermarkStudio/app/src/main/res/values/   OK
+    testing: WatermarkStudio/app/src/main/res/values/styles.xml   OK
+    testing: WatermarkStudio/app/src/main/res/values/colors.xml   OK
+    testing: WatermarkStudio/gradle.properties   OK
+    testing: WatermarkStudio/settings.gradle   OK
+At least one error was detected in WatermarkStudio-source.zip.
+zip_test_status=2
