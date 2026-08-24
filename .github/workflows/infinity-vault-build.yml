@@ -19,11 +19,6 @@ jobs:
           unzip -q infinity-vault-source.zip
           test -f infinity-vault/app/src/main/java/com/vhanma/infinityvault/MainActivity.java
 
-      - name: Apply Android Keystore IV hotfix
-        shell: bash
-        run: |
-          python3 -c 'from pathlib import Path; p=Path("infinity-vault/app/src/main/java/com/vhanma/infinityvault/MainActivity.java"); s=p.read_text(); old="            byte[] iv = new byte[12];\\n            random.nextBytes(iv);\\n            Cipher cipher = Cipher.getInstance(\\\"AES/GCM/NoPadding\\\");\\n            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(), new GCMParameterSpec(128, iv));\\n            cipher.updateAAD(hash.getBytes(StandardCharsets.UTF_8));\\n            byte[] encrypted = cipher.doFinal(payload);\\n"; new="            Cipher cipher = Cipher.getInstance(\\\"AES/GCM/NoPadding\\\");\\n            cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey());\\n            byte[] iv = cipher.getIV();\\n            if (iv == null || iv.length < 8 || iv.length > 32) {\\n                throw new java.security.GeneralSecurityException(\\\"Android Keystore did not provide a valid GCM IV.\\\");\\n            }\\n            cipher.updateAAD(hash.getBytes(StandardCharsets.UTF_8));\\n            byte[] encrypted = cipher.doFinal(payload);\\n"; assert old in s, "AES-GCM block not found"; p.write_text(s.replace(old,new))'
-
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
