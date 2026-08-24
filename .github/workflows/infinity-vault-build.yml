@@ -22,7 +22,7 @@ jobs:
       - name: Apply Infinity Vault v1.1 Free Space patch
         shell: bash
         run: |
-          cat .ivpatch/part00.txt .ivpatch/part01.txt .ivpatch/part02.txt | base64 -d | gzip -d > infinity-vault-v1.1.patch
+          cat .ivpatch/v11-00.txt .ivpatch/v11-01.txt .ivpatch/v11-02.txt .ivpatch/v11-03.txt .ivpatch/v11-04.txt | base64 -d | gzip -d > infinity-vault-v1.1.patch
           patch --batch -p5 -d infinity-vault < infinity-vault-v1.1.patch
           grep -q "Free Space Mode" infinity-vault/app/src/main/java/com/vhanma/infinityvault/MainActivity.java
           grep -q "versionName '1.1.0'" infinity-vault/app/build.gradle
