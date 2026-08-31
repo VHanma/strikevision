@@ -1,0 +1,28 @@
+name: R3 MaxSight Source Dump
+
+on:
+  push:
+    branches: [r3-maxsight100x-build]
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct source
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re, base64, pathlib
+          s = pathlib.Path('.github/workflows/r3-maxsight100x.yml').read_text()
+          m = re.search(r"echo '([A-Za-z0-9+/=]+)' \| base64 -d", s)
+          if not m:
+              raise SystemExit('embedded project not found')
+          pathlib.Path('/tmp/maxsight.zip').write_bytes(base64.b64decode(m.group(1)))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MaxSight100X-SOURCE
+          path: /tmp/maxsight.zip
+          if-no-files-found: error
