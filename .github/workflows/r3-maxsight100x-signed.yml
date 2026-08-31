@@ -1,0 +1,54 @@
+name: R3 MaxSight 100X Signed APK
+
+on:
+  push:
+    branches: [r3-maxsight100x-build]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Reconstruct MaxSight
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re, base64, pathlib
+          s = pathlib.Path('.github/workflows/r3-maxsight100x.yml').read_text()
+          m = re.search(r"echo '([A-Za-z0-9+/=]+)' \| base64 -d", s)
+          if not m:
+              raise SystemExit('embedded project not found')
+          pathlib.Path('/tmp/maxsight.zip').write_bytes(base64.b64decode(m.group(1)))
+          PY
+          rm -rf /tmp/maxsight
+          mkdir -p /tmp/maxsight
+          unzip -q /tmp/maxsight.zip -d /tmp/maxsight
+          cat > /tmp/maxsight/MaxSight100X/gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          android.suppressUnsupportedCompileSdk=35
+          EOF
+      - name: Build signed installable APK
+        working-directory: /tmp/maxsight/MaxSight100X
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Stage APK
+        run: cp /tmp/maxsight/MaxSight100X/app/build/outputs/apk/debug/app-debug.apk /tmp/MaxSight100X-R3.apk
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MaxSight100X-R3-SIGNED
+          path: /tmp/MaxSight100X-R3.apk
+          if-no-files-found: error
