@@ -41,15 +41,16 @@ jobs:
           android.enableJetifier=true
           android.suppressUnsupportedCompileSdk=35
           EOF
+          sed -i 's#android:style/Theme.Material.Light.NoActionBar#Theme.AppCompat.DayNight.NoActionBar#' /tmp/maxsight/MaxSight100X/app/src/main/res/values/themes.xml
           sed -i 's/Presentation.createForShortSide(1080)/Presentation.createForHeight(1080)/' /tmp/maxsight/MaxSight100X/app/src/main/java/com/hanma/maxsight/MainActivity.java
       - name: Build signed installable APK
         working-directory: /tmp/maxsight/MaxSight100X
         run: gradle --no-daemon :app:assembleDebug
       - name: Stage APK
-        run: cp /tmp/maxsight/MaxSight100X/app/build/outputs/apk/debug/app-debug.apk /tmp/MaxSight100X-R3.apk
+        run: cp /tmp/maxsight/MaxSight100X/app/build/outputs/apk/debug/app-debug.apk /tmp/MaxSight100X-R3-FIXED.apk
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MaxSight100X-R3-SIGNED
-          path: /tmp/MaxSight100X-R3.apk
+          name: MaxSight100X-R3-FIXED
+          path: /tmp/MaxSight100X-R3-FIXED.apk
           if-no-files-found: error
