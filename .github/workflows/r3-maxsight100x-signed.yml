@@ -1,4 +1,4 @@
-name: R3 MaxSight 100X Signed APK
+name: R3 MaxSight 100X Runtime-Tested APK
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-and-smoke-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,11 +18,13 @@ jobs:
         with:
           packages: platform-tools
       - name: Install Android SDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - name: Reconstruct and patch MaxSight
+      - name: Reconstruct and harden MaxSight
         shell: bash
         run: |
           python3 - <<'PY'
@@ -41,16 +43,59 @@ jobs:
           android.enableJetifier=true
           android.suppressUnsupportedCompileSdk=35
           EOF
-          sed -i 's#android:style/Theme.Material.Light.NoActionBar#Theme.AppCompat.DayNight.NoActionBar#' /tmp/maxsight/MaxSight100X/app/src/main/res/values/themes.xml
-          sed -i 's/Presentation.createForShortSide(1080)/Presentation.createForHeight(1080)/' /tmp/maxsight/MaxSight100X/app/src/main/java/com/hanma/maxsight/MainActivity.java
-      - name: Build signed installable APK
+          SRC=/tmp/maxsight/MaxSight100X/app/src/main/java/com/hanma/maxsight/MainActivity.java
+          THEME=/tmp/maxsight/MaxSight100X/app/src/main/res/values/themes.xml
+          sed -i 's/import androidx.appcompat.app.AppCompatActivity;/import androidx.activity.ComponentActivity;/' "$SRC"
+          sed -i 's/public class MainActivity extends AppCompatActivity/public class MainActivity extends ComponentActivity/' "$SRC"
+          sed -i 's/Presentation.createForShortSide(1080)/Presentation.createForHeight(1080)/' "$SRC"
+          sed -i 's#Theme.AppCompat.DayNight.NoActionBar#android:style/Theme.Material.Light.NoActionBar#' "$THEME" || true
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/maxsight/MaxSight100X/app/src/main/java/com/hanma/maxsight/MainActivity.java')
+          s=p.read_text()
+          s=s.replace('        goImmersive();\n        buildUi();', '        buildUi();\n        previewView.post(this::safeImmersive);')
+          s=s.replace('    private void goImmersive() {', '    private void safeImmersive() {\n        try {\n            goImmersive();\n        } catch (Throwable ignored) {}\n    }\n\n    private void goImmersive() {')
+          p.write_text(s)
+          PY
+      - name: Build signed APK
         working-directory: /tmp/maxsight/MaxSight100X
         run: gradle --no-daemon :app:assembleDebug
+      - name: Create emulator
+        run: |
+          echo no | avdmanager create avd -n maxsight_test -k "system-images;android-35;google_apis;x86_64" --force
+      - name: Boot emulator
+        run: |
+          nohup emulator -avd maxsight_test -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot > /tmp/emulator.log 2>&1 &
+          adb wait-for-device
+          timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed | tr -d "\r")" = "1" ]; do sleep 3; done'
+          adb shell input keyevent 82 || true
+      - name: Install and launch smoke test
+        run: |
+          APK=/tmp/maxsight/MaxSight100X/app/build/outputs/apk/debug/app-debug.apk
+          adb install -r "$APK"
+          adb logcat -c
+          adb shell pm grant com.hanma.maxsight android.permission.CAMERA || true
+          adb shell pm grant com.hanma.maxsight android.permission.RECORD_AUDIO || true
+          adb shell am force-stop com.hanma.maxsight
+          adb shell am start -W -n com.hanma.maxsight/.MainActivity
+          sleep 8
+          adb logcat -d > /tmp/maxsight-logcat.txt
+          if grep -qE 'FATAL EXCEPTION.*com.hanma.maxsight|Process: com.hanma.maxsight.*FATAL EXCEPTION' /tmp/maxsight-logcat.txt; then
+            echo 'MAXSIGHT CRASHED DURING SMOKE TEST'
+            grep -A60 -B10 -E 'FATAL EXCEPTION|Process: com.hanma.maxsight' /tmp/maxsight-logcat.txt
+            exit 1
+          fi
+          if ! adb shell pidof com.hanma.maxsight >/dev/null; then
+            echo 'MAXSIGHT PROCESS IS NOT ALIVE AFTER LAUNCH'
+            grep -A60 -B10 -E 'AndroidRuntime|com.hanma.maxsight' /tmp/maxsight-logcat.txt | tail -200
+            exit 1
+          fi
+          echo 'MAXSIGHT SURVIVED RUNTIME LAUNCH TEST'
       - name: Stage APK
-        run: cp /tmp/maxsight/MaxSight100X/app/build/outputs/apk/debug/app-debug.apk /tmp/MaxSight100X-R3-FIXED.apk
+        run: cp /tmp/maxsight/MaxSight100X/app/build/outputs/apk/debug/app-debug.apk /tmp/MaxSight100X-R3-RUNTIME-TESTED.apk
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MaxSight100X-R3-FIXED
-          path: /tmp/MaxSight100X-R3-FIXED.apk
+          name: MaxSight100X-R3-RUNTIME-TESTED
+          path: /tmp/MaxSight100X-R3-RUNTIME-TESTED.apk
           if-no-files-found: error
