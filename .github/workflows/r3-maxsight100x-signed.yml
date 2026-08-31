@@ -22,7 +22,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - name: Reconstruct MaxSight
+      - name: Reconstruct and patch MaxSight
         shell: bash
         run: |
           python3 - <<'PY'
@@ -41,6 +41,7 @@ jobs:
           android.enableJetifier=true
           android.suppressUnsupportedCompileSdk=35
           EOF
+          sed -i 's/Presentation.createForShortSide(1080)/Presentation.createForHeight(1080)/' /tmp/maxsight/MaxSight100X/app/src/main/java/com/hanma/maxsight/MainActivity.java
       - name: Build signed installable APK
         working-directory: /tmp/maxsight/MaxSight100X
         run: gradle --no-daemon :app:assembleDebug
