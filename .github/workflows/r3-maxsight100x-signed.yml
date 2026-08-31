@@ -51,6 +51,36 @@ jobs:
       - name: Build signed APK
         working-directory: /tmp/maxsight/MaxSight100X
         run: gradle --no-daemon :app:assembleDebug
+      - name: Create runtime smoke script
+        shell: bash
+        run: |
+          cat > /tmp/maxsight-smoke.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          APK=/tmp/maxsight/MaxSight100X/app/build/outputs/apk/debug/app-debug.apk
+          adb install -r "$APK"
+          adb logcat -c
+          adb shell pm grant com.hanma.maxsight android.permission.CAMERA || true
+          adb shell pm grant com.hanma.maxsight android.permission.RECORD_AUDIO || true
+          adb shell am force-stop com.hanma.maxsight
+          adb shell am start -W -n com.hanma.maxsight/.MainActivity
+          sleep 10
+          adb logcat -d > /tmp/maxsight-logcat.txt
+          PID="$(adb shell pidof com.hanma.maxsight | tr -d '\r')"
+          echo "PID=$PID"
+          if [ -z "$PID" ]; then
+            echo 'MAXSIGHT PROCESS DIED'
+            grep -A100 -B30 -E 'AndroidRuntime|FATAL EXCEPTION|com.hanma.maxsight' /tmp/maxsight-logcat.txt | tail -300 || true
+            exit 1
+          fi
+          if grep -qE 'FATAL EXCEPTION.*|Process: com.hanma.maxsight' /tmp/maxsight-logcat.txt; then
+            echo 'MAXSIGHT FATAL EXCEPTION FOUND'
+            grep -A100 -B30 -E 'FATAL EXCEPTION|Process: com.hanma.maxsight' /tmp/maxsight-logcat.txt | tail -300 || true
+            exit 1
+          fi
+          echo MAXSIGHT_RUNTIME_LAUNCH_OK
+          EOF
+          chmod +x /tmp/maxsight-smoke.sh
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -65,27 +95,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back virtualscene -camera-front emulated
-          script: |
-            APK=/tmp/maxsight/MaxSight100X/app/build/outputs/apk/debug/app-debug.apk
-            adb install -r "$APK"
-            adb logcat -c
-            adb shell pm grant com.hanma.maxsight android.permission.CAMERA || true
-            adb shell pm grant com.hanma.maxsight android.permission.RECORD_AUDIO || true
-            adb shell am force-stop com.hanma.maxsight
-            adb shell am start -W -n com.hanma.maxsight/.MainActivity
-            sleep 10
-            adb logcat -d > /tmp/maxsight-logcat.txt
-            PID=$(adb shell pidof com.hanma.maxsight | tr -d '\r')
-            echo "PID=$PID"
-            if [ -z "$PID" ]; then
-              grep -A100 -B30 -E 'AndroidRuntime|FATAL EXCEPTION|com.hanma.maxsight' /tmp/maxsight-logcat.txt | tail -300
-              exit 1
-            fi
-            if grep -q 'FATAL EXCEPTION' /tmp/maxsight-logcat.txt; then
-              grep -A100 -B30 'FATAL EXCEPTION' /tmp/maxsight-logcat.txt
-              exit 1
-            fi
-            echo MAXSIGHT_RUNTIME_LAUNCH_OK
+          script: /tmp/maxsight-smoke.sh
       - name: Stage APK
         run: cp /tmp/maxsight/MaxSight100X/app/build/outputs/apk/debug/app-debug.apk /tmp/MaxSight100X-R3-RUNTIME-TESTED.apk
       - name: Upload APK
