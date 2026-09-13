@@ -13,8 +13,6 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -29,7 +27,7 @@ public class OmegaTwinActivity extends Activity {
         root.addView(tv("Ω DIGITAL FIGHTER TWIN",24,Color.WHITE,Typeface.BOLD));root.addView(tv("Your baseline is built from your own high-confidence strikes, technique by technique, side by side, stance by stance.",12,Color.LTGRAY,Typeface.NORMAL));
         Map<String,Group> groups=new HashMap<>();int sessions=0,total=0;
         File dir=new File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS),"StrikeVisionOmega/sessions");File[] files=dir.listFiles((d,n)->n.endsWith(".json"));
-        if(files!=null){java.util.Arrays.sort(files,Comparator.comparingLong(File::lastModified));for(File f:files){try{JSONObject r=new JSONObject(Files.readString(f.toPath(), StandardCharsets.UTF_8));String stance=r.optJSONObject("profile")==null?"ORTHODOX":r.optJSONObject("profile").optString("stance","ORTHODOX");JSONArray a=r.optJSONArray("strikes");if(a==null)continue;sessions++;for(int i=0;i<a.length();i++){JSONObject s=a.getJSONObject(i);double conf=s.optDouble("confidence",0);if(conf<.45)continue;String key=stance+" • "+s.optString("side")+" • "+s.optString("technique","Strike");Group g=groups.get(key);if(g==null){g=new Group(key);groups.put(key,g);}Sample x=new Sample();x.mph=s.optDouble("peakMph");x.chain=s.optDouble("chainScore");x.conf=conf;x.recoil=s.optDouble("recoilMph");x.ttp=s.optDouble("timeToPeakMs");x.eff=s.optDouble("pathEfficiency");x.time=f.lastModified();g.a.add(x);total++;}}catch(Throwable ignored){}}}
+        if(files!=null){java.util.Arrays.sort(files,Comparator.comparingLong(File::lastModified));for(File f:files){try{JSONObject r=new JSONObject(OmegaIo.read(f));String stance=r.optJSONObject("profile")==null?"ORTHODOX":r.optJSONObject("profile").optString("stance","ORTHODOX");JSONArray a=r.optJSONArray("strikes");if(a==null)continue;sessions++;for(int i=0;i<a.length();i++){JSONObject s=a.getJSONObject(i);double conf=s.optDouble("confidence",0);if(conf<.45)continue;String key=stance+" • "+s.optString("side")+" • "+s.optString("technique","Strike");Group g=groups.get(key);if(g==null){g=new Group(key);groups.put(key,g);}Sample x=new Sample();x.mph=s.optDouble("peakMph");x.chain=s.optDouble("chainScore");x.conf=conf;x.recoil=s.optDouble("recoilMph");x.ttp=s.optDouble("timeToPeakMs");x.eff=s.optDouble("pathEfficiency");x.time=f.lastModified();g.a.add(x);total++;}}catch(Throwable ignored){}}}
         root.addView(tv("Twin memory: "+sessions+" analyzed sessions • "+total+" accepted high-confidence strikes",13,Color.rgb(188,255,50),Typeface.BOLD));
         if(groups.isEmpty()){root.addView(tv("Twin is dormant. Run High-Speed Lab and analyze a few clean strikes to grow the model.",14,Color.WHITE,Typeface.NORMAL));return;}
         List<Group> list=new ArrayList<>(groups.values());list.sort((a,b)->Integer.compare(b.a.size(),a.a.size()));
