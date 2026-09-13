@@ -1,0 +1,52 @@
+name: Build StrikeVision Velocity APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'native-apk/**'
+      - '.github/workflows/build-strikevision-native.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build native APK
+        working-directory: native-apk
+        run: gradle --no-daemon clean assembleDebug --stacktrace
+
+      - name: Hash APK
+        run: sha256sum native-apk/app/build/outputs/apk/debug/app-debug.apk | tee StrikeVision-Velocity-v2.apk.sha256
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: StrikeVision-Velocity-v2-APK
+          path: |
+            native-apk/app/build/outputs/apk/debug/app-debug.apk
+            StrikeVision-Velocity-v2.apk.sha256
+          if-no-files-found: error
