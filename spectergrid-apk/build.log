@@ -22,7 +22,6 @@ Daemon will be stopped at the end of the build
 > Task :app:extractDeepLinksDebug
 > Task :app:processDebugMainManifest
 > Task :app:processDebugManifest
-> Task :app:processDebugManifestForPackage
 > Task :app:javaPreCompileDebug
 > Task :app:mergeDebugShaders
 > Task :app:compileDebugShaders NO-SOURCE
@@ -30,12 +29,15 @@ Daemon will be stopped at the end of the build
 > Task :app:mergeDebugAssets
 > Task :app:compressDebugAssets
 > Task :app:desugarDebugFileDependencies
-> Task :app:mergeDebugJniLibFolders
+> Task :app:processDebugManifestForPackage
 > Task :app:checkDebugDuplicateClasses
+> Task :app:mergeDebugJniLibFolders
+> Task :app:mergeLibDexDebug
 > Task :app:mergeDebugNativeLibs
 > Task :app:processDebugResources FAILED
+> Task :app:validateSigningDebug
 > Task :app:mergeExtDexDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1789289386607.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1789293765841.json
 
 FAILURE: Build failed with an exception.
 
@@ -304,5 +306,5 @@ error: failed linking file resources.
 		at java.base/java.lang.Thread.run(Thread.java:840)
 
 
-BUILD FAILED in 49s
-26 actionable tasks: 25 executed, 1 up-to-date
+BUILD FAILED in 22s
+28 actionable tasks: 27 executed, 1 up-to-date
