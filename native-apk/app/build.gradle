@@ -7,7 +7,7 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.strikevision.app'
+        applicationId 'com.strikevision.v2'
         minSdk 23
         targetSdk 35
         versionCode 6
