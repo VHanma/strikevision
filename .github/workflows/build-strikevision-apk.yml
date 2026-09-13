@@ -59,10 +59,22 @@ jobs:
       - name: Publish APK to repository
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name "StrikeVision Builder"
           git config user.email "actions@github.com"
           git add native-apk/releases
           if ! git diff --cached --quiet; then
             git commit -m "Publish StrikeVision Omega v3 debug APK [skip ci]"
-            git push
+            # Another build workflow may publish to main at the same time. Rebase our
+            # generated-file commit onto the latest main before pushing.
+            for attempt in 1 2 3; do
+              git fetch origin main
+              git rebase origin/main
+              if git push origin HEAD:main; then
+                exit 0
+              fi
+              sleep $((attempt * 2))
+            done
+            echo "Could not publish generated APK after 3 rebased attempts" >&2
+            exit 1
           fi
