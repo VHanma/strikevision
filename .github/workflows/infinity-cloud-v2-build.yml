@@ -1,0 +1,66 @@
+name: Infinity Cloud v2 APK
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ infinity-cloud-v2 ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct Infinity Cloud v2.1 source
+        shell: bash
+        run: |
+          cat .iv2src/part00.txt .iv2src/part01.txt .iv2src/part02.txt .iv2src/part03.txt .iv2src/part04.txt .iv2src/part05.txt | base64 -d > infinity-cloud-v2.1-buildsrc.zip
+          echo "470ba8ecd6e4f3373bc232f327b37ff9cc05298a9bc2ed3644c4533060104e20  infinity-cloud-v2.1-buildsrc.zip" | sha256sum -c -
+          unzip -q infinity-cloud-v2.1-buildsrc.zip
+          test -f iv2work2/app/src/main/java/com/vhanma/infinityvault/MainActivity.java
+          grep -q "versionName '2.1.0'" iv2work2/app/build.gradle
+          grep -q "SAVE YOUR INFINITY KEY" iv2work2/app/src/main/java/com/vhanma/infinityvault/MainActivity.java
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Ensure Android SDK 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        working-directory: iv2work2
+        run: gradle --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Stage APK
+        shell: bash
+        run: |
+          cp iv2work2/app/build/outputs/apk/debug/app-debug.apk InfinityCloud-v2.1.0-debug.apk
+          sha256sum InfinityCloud-v2.1.0-debug.apk > InfinityCloud-v2.1.0-debug.apk.sha256
+          cp infinity-cloud-v2.1-buildsrc.zip InfinityCloud-v2.1.0-source.zip
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: InfinityCloud-v2.1.0
+          path: |
+            InfinityCloud-v2.1.0-debug.apk
+            InfinityCloud-v2.1.0-debug.apk.sha256
+            InfinityCloud-v2.1.0-source.zip
+          if-no-files-found: error
