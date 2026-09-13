@@ -12,16 +12,17 @@ Daemon will be stopped at the end of the build
 > Task :app:generateDebugResValues
 > Task :app:generateDebugResources
 > Task :app:packageDebugResources
+> Task :app:mergeDebugResources
 > Task :app:generateDebugBuildConfig
 > Task :app:parseDebugLocalResources
-> Task :app:mapDebugSourceSetPaths
 > Task :app:checkDebugAarMetadata
+> Task :app:dataBindingGenBaseClassesDebug
+> Task :app:mapDebugSourceSetPaths
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug
 > Task :app:processDebugMainManifest
-> Task :app:mergeDebugResources
 > Task :app:processDebugManifest
-> Task :app:dataBindingGenBaseClassesDebug
+> Task :app:processDebugManifestForPackage
 > Task :app:javaPreCompileDebug
 > Task :app:mergeDebugShaders
 > Task :app:compileDebugShaders NO-SOURCE
@@ -32,16 +33,9 @@ Daemon will be stopped at the end of the build
 > Task :app:mergeDebugJniLibFolders
 > Task :app:checkDebugDuplicateClasses
 > Task :app:mergeDebugNativeLibs
-> Task :app:processDebugManifestForPackage
-> Task :app:mergeLibDexDebug
-
-> Task :app:stripDebugDebugSymbols
-Unable to strip the following libraries, packaging them as they are: libimage_processing_util_jni.so, libsurface_util_jni.so.
-
 > Task :app:processDebugResources FAILED
-> Task :app:validateSigningDebug
 > Task :app:mergeExtDexDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1784165279410.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1789289386607.json
 
 FAILURE: Build failed with an exception.
 
@@ -310,5 +304,5 @@ error: failed linking file resources.
 		at java.base/java.lang.Thread.run(Thread.java:840)
 
 
-BUILD FAILED in 47s
-29 actionable tasks: 28 executed, 1 up-to-date
+BUILD FAILED in 49s
+26 actionable tasks: 25 executed, 1 up-to-date
