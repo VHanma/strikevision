@@ -1,23 +1,955 @@
 package com.strikevision.app;
 
-import android.Manifest;import android.content.*;import android.content.pm.*;import android.graphics.*;import android.graphics.drawable.*;import android.media.Image;import android.os.*;import android.view.*;import android.widget.*;import java.util.*;import java.util.concurrent.*;
-import androidx.activity.ComponentActivity;import androidx.camera.core.*;import androidx.camera.lifecycle.ProcessCameraProvider;import androidx.camera.view.PreviewView;import androidx.core.content.ContextCompat;import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mlkit.vision.common.InputImage;import com.google.mlkit.vision.pose.*;import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions;
+import android.Manifest;
+import android.app.AlertDialog;
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
+import android.graphics.PointF;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.media.Image;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Size;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
 
-public class MainActivity extends ComponentActivity{
- FrameLayout root;PreviewView pv;LinearLayout hud;TextView stat,poseTxt,velTxt,countTxt,recTxt;Handler ui=new Handler(Looper.getMainLooper());ExecutorService ex;PoseDetector det;SharedPreferences sp;int secs=5,frames,poses,sens=2;boolean active,processing,burst;long end,lastHot,lastT,lastStrike;double vel,peak,scale=120,base=.18,hot=1.0;String peakName="Strike";PointF torso,lastTorso;HashMap<Integer,PointF> smooth=new HashMap<>(),prev=new HashMap<>();ArrayList<Integer> speeds=new ArrayList<>(),powers=new ArrayList<>();ArrayList<String> log=new ArrayList<>();int[] weapons={PoseLandmark.LEFT_WRIST,PoseLandmark.RIGHT_WRIST,PoseLandmark.LEFT_ANKLE,PoseLandmark.RIGHT_ANKLE};
- public void onCreate(Bundle b){super.onCreate(b);sp=getSharedPreferences("sv_pose",0);ex=Executors.newSingleThreadExecutor();det=PoseDetection.getClient(new PoseDetectorOptions.Builder().setDetectorMode(PoseDetectorOptions.STREAM_MODE).build());if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.CAMERA},9);else screen();}
- public void onRequestPermissionsResult(int r,String[] p,int[] g){super.onRequestPermissionsResult(r,p,g);screen();}protected void onDestroy(){super.onDestroy();try{det.close();}catch(Throwable t){}try{ex.shutdown();}catch(Throwable t){}}
- void screen(){root=new FrameLayout(this);pv=new PreviewView(this);pv.setScaleType(PreviewView.ScaleType.FILL_CENTER);root.addView(pv,new FrameLayout.LayoutParams(-1,-1));hud=new LinearLayout(this);hud.setOrientation(LinearLayout.VERTICAL);hud.setPadding(24,48,24,30);hud.setBackgroundColor(Color.argb(72,0,0,0));root.addView(hud,new FrameLayout.LayoutParams(-1,-1));setContentView(root);center("STRIKEVISION",30,Color.WHITE);center("Pose Core v1.4 | stabilized landmarks",13,Color.rgb(163,255,18));stat=center("Starting pose camera...",16,Color.rgb(163,255,18));poseTxt=center("Frames: 0 | Poses: 0",14,Color.LTGRAY);velTxt=center("Vel: 0 | Hot: 0 | Base: 0",14,Color.rgb(59,130,246));countTxt=center("Strikes: 0",17,Color.WHITE);recTxt=center("Record impact: "+sp.getInt("rec",0),15,Color.LTGRAY);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);hud.addView(row);Button a=small("5s"),b=small("10s"),c=small("15s");a.setOnClickListener(v->{secs=5;stat.setText("5 sec selected");});b.setOnClickListener(v->{secs=10;stat.setText("10 sec selected");});c.setOnClickListener(v->{secs=15;stat.setText("15 sec selected");});row.addView(a);row.addView(b);row.addView(c);LinearLayout row2=new LinearLayout(this);row2.setOrientation(LinearLayout.HORIZONTAL);hud.addView(row2);Button x=small("Strict"),y=small("Balanced"),z=small("Sensitive");x.setOnClickListener(v->{sens=1;stat.setText("Strict mode");});y.setOnClickListener(v->{sens=2;stat.setText("Balanced mode");});z.setOnClickListener(v->{sens=3;stat.setText("Sensitive mode");});row2.addView(x);row2.addView(y);row2.addView(z);hud.addView(new View(this),new LinearLayout.LayoutParams(1,0,1));Button start=btn("Start 5-count");start.setOnClickListener(v->begin());hud.addView(start);Button clear=btn("Clear record");clear.setOnClickListener(v->{sp.edit().clear().apply();screen();});hud.addView(clear);loop();camera();}
- void camera(){ListenableFuture<ProcessCameraProvider> f=ProcessCameraProvider.getInstance(this);f.addListener(()->{try{ProcessCameraProvider p=f.get();Preview pr=new Preview.Builder().build();pr.setSurfaceProvider(pv.getSurfaceProvider());ImageAnalysis an=new ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build();an.setAnalyzer(ex,this::analyze);p.unbindAll();p.bindToLifecycle(this,CameraSelector.DEFAULT_FRONT_CAMERA,pr,an);stat.setText("Pose live. Step back: shoulders + wrists visible.");}catch(Throwable e){stat.setText("CameraX fail: "+e.getClass().getSimpleName());}},ContextCompat.getMainExecutor(this));}
- @androidx.camera.core.ExperimentalGetImage public void analyze(ImageProxy ip){frames++;if(processing){ip.close();return;}Image im=ip.getImage();if(im==null){ip.close();return;}processing=true;InputImage ii=InputImage.fromMediaImage(im,ip.getImageInfo().getRotationDegrees());det.process(ii).addOnSuccessListener(p->pose(p,System.currentTimeMillis())).addOnCompleteListener(t->{processing=false;ip.close();});}
- void pose(Pose p,long now){poses++;PointF t=torso(p);if(t==null)return;torso=t;PoseLandmark ls=p.getPoseLandmark(PoseLandmark.LEFT_SHOULDER),rs=p.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER);if(good(ls)&&good(rs))scale=Math.max(60,dist(ls.getPosition(),rs.getPosition()));double best=0;String nm="Strike";if(lastT>0&&lastTorso!=null){double dt=Math.max(.033,(now-lastT)/1000.0);double tx=torso.x-lastTorso.x,ty=torso.y-lastTorso.y;for(int k:weapons){PoseLandmark lm=p.getPoseLandmark(k);if(!good(lm))continue;PointF raw=lm.getPosition(),oldS=smooth.get(k);PointF cur=oldS==null?raw:new PointF((float)(oldS.x*.45+raw.x*.55),(float)(oldS.y*.45+raw.y*.55));PointF old=prev.get(k);smooth.put(k,cur);if(old!=null){double dx=(cur.x-old.x)-tx,dy=(cur.y-old.y)-ty;double v=(Math.sqrt(dx*dx+dy*dy)/scale)/dt;if(v>best){best=v;nm=name(k);}}}}for(int k:weapons){PointF s=smooth.get(k);if(s!=null)prev.put(k,new PointF(s.x,s.y));}lastT=now;lastTorso=new PointF(torso.x,torso.y);vel=vel*.62+best*.38;if(!active)base=base*.96+vel*.04;if(active)strike(vel,nm);}else{for(int k:weapons){PoseLandmark lm=p.getPoseLandmark(k);if(good(lm))smooth.put(k,lm.getPosition());}lastT=now;lastTorso=new PointF(t.x,t.y);}}
- boolean good(PoseLandmark lm){return lm!=null&&lm.getInFrameLikelihood()>.45;}PointF torso(Pose p){ArrayList<PointF> pts=new ArrayList<>();int[] ks={PoseLandmark.LEFT_SHOULDER,PoseLandmark.RIGHT_SHOULDER,PoseLandmark.LEFT_HIP,PoseLandmark.RIGHT_HIP};for(int k:ks){PoseLandmark lm=p.getPoseLandmark(k);if(good(lm))pts.add(lm.getPosition());}if(pts.size()<2)return null;float x=0,y=0;for(PointF q:pts){x+=q.x;y+=q.y;}return new PointF(x/pts.size(),y/pts.size());}
- double dist(PointF a,PointF b){double x=a.x-b.x,y=a.y-b.y;return Math.sqrt(x*x+y*y);}String name(int k){if(k==PoseLandmark.LEFT_WRIST)return "Left punch";if(k==PoseLandmark.RIGHT_WRIST)return "Right punch";if(k==PoseLandmark.LEFT_ANKLE)return "Left kick";if(k==PoseLandmark.RIGHT_ANKLE)return "Right kick";return "Strike";}
- void strike(double v,String nm){long n=System.currentTimeMillis();if(n>end){finishRound();return;}double floor=sens==1?1.15:(sens==2?.88:.62);hot=Math.max(floor,base*(sens==3?1.8:(sens==2?2.4:3.0))+.35);if(v>hot){if(!burst){burst=true;peak=v;peakName=nm;}if(v>peak){peak=v;peakName=nm;}lastHot=n;}else if(burst&&n-lastHot>190)addStrike();}
- void addStrike(){long n=System.currentTimeMillis();if(n-lastStrike<260){burst=false;peak=0;return;}int mph=Math.max(3,(int)Math.min(70,peak*8.0));int pow=Math.max(1,(int)Math.min(100,peak*15.0));if(pow<6){burst=false;peak=0;return;}speeds.add(mph);powers.add(pow);log.add("#"+speeds.size()+" "+peakName+" | "+mph+" mph | "+pow+" impact");lastStrike=n;burst=false;peak=0;}
- void begin(){log.clear();speeds.clear();powers.clear();smooth.clear();prev.clear();lastT=0;lastTorso=null;vel=0;peak=0;base=.18;burst=false;active=false;lastStrike=0;stat.setText("5");for(int i=4;i>0;i--){final int q=i;ui.postDelayed(()->stat.setText(""+q),(5-i)*1000);}ui.postDelayed(()->{end=System.currentTimeMillis()+secs*1000L;active=true;stat.setText("GO — stabilized pose tracking");},5000);ui.postDelayed(()->finishRound(),5000+secs*1000L+350);}
- void finishRound(){if(!active)return;active=false;if(burst&&peak>0)addStrike();int fast=0,hard=0,sum=0;for(int i=0;i<speeds.size();i++){fast=Math.max(fast,speeds.get(i));hard=Math.max(hard,powers.get(i));sum+=speeds.get(i);}int avg=speeds.isEmpty()?0:sum/speeds.size();if(hard>sp.getInt("rec",0))sp.edit().putInt("rec",hard).putInt("fast",fast).apply();hud.removeAllViews();center("Pose Round Complete",28,Color.WHITE);center(speeds.size()+" strikes",30,Color.rgb(163,255,18));center("Fastest: "+fast+" mph",22,Color.rgb(59,130,246));center("Hardest: "+hard+" impact",22,Color.rgb(59,130,246));center("Average: "+avg+" mph",17,Color.LTGRAY);center("Record impact: "+sp.getInt("rec",0),17,Color.rgb(163,255,18));center("Frames: "+frames+" | Poses: "+poses+" | Last vel: "+String.format(java.util.Locale.US,"%.2f",vel),13,Color.LTGRAY);String s="";for(String l:log)s+=l+"\n";hud.addView(card("Strike log",s.length()>0?s:"No clean pose strike detected. Use Sensitive, step back, keep shoulders + wrists in frame, punch across camera."));hud.addView(new View(this),new LinearLayout.LayoutParams(1,0,1));Button again=btn("Run again");again.setOnClickListener(v->screen());hud.addView(again);}
- void loop(){ui.postDelayed(new Runnable(){public void run(){if(poseTxt!=null)poseTxt.setText("Frames: "+frames+" | Poses: "+poses+" | Scale: "+Math.round(scale));if(velTxt!=null)velTxt.setText("Vel: "+String.format(java.util.Locale.US,"%.2f",vel)+" | Hot: "+String.format(java.util.Locale.US,"%.2f",hot)+" | Base: "+String.format(java.util.Locale.US,"%.2f",base));if(countTxt!=null)countTxt.setText("Strikes: "+speeds.size());ui.postDelayed(this,250);}},250);}
- TextView center(String s,int z,int col){TextView t=txt(s,z,col,Typeface.BOLD);t.setGravity(Gravity.CENTER);hud.addView(t);return t;}TextView txt(String s,int z,int col,int st){TextView t=new TextView(this);t.setText(s);t.setTextSize(z);t.setTextColor(col);t.setTypeface(Typeface.DEFAULT,st);t.setPadding(0,6,0,6);return t;}Button btn(String s){Button b=new Button(this);b.setText(s);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setTextSize(16);b.setTypeface(Typeface.DEFAULT,Typeface.BOLD);b.setBackground(bg(Color.rgb(59,130,246)));b.setLayoutParams(new LinearLayout.LayoutParams(-1,120));return b;}Button small(String s){Button b=btn(s);b.setLayoutParams(new LinearLayout.LayoutParams(0,98,1));return b;}View card(String a,String b){LinearLayout c=new LinearLayout(this);c.setOrientation(LinearLayout.VERTICAL);c.setPadding(22,20,22,20);c.setBackground(bg(Color.rgb(23,23,23)));c.addView(txt(a,21,Color.WHITE,Typeface.BOLD));c.addView(txt(b,15,Color.LTGRAY,Typeface.NORMAL));return c;}GradientDrawable bg(int c){GradientDrawable g=new GradientDrawable();g.setColor(c);g.setCornerRadius(28);g.setStroke(2,Color.rgb(45,45,45));return g;}
+import androidx.activity.ComponentActivity;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ExperimentalGetImage;
+import androidx.camera.core.ImageAnalysis;
+import androidx.camera.core.ImageProxy;
+import androidx.camera.core.Preview;
+import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.view.PreviewView;
+import androidx.core.content.ContextCompat;
+
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.pose.Pose;
+import com.google.mlkit.vision.pose.PoseDetection;
+import com.google.mlkit.vision.pose.PoseDetector;
+import com.google.mlkit.vision.pose.PoseLandmark;
+import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class MainActivity extends ComponentActivity {
+    private static final int CAMERA_PERMISSION = 77;
+    private static final double MPS_TO_MPH = 2.2369362921;
+    private static final double MPS2_TO_FTPS2 = 3.280839895;
+    private static final double KG_TO_LB = 2.2046226218;
+    private static final double J_TO_FTLB = 0.7375621493;
+    private static final double KGMPS_TO_LBMFTPS = 7.233013851;
+    private static final double N_TO_LBF = 0.2248089431;
+
+    private FrameLayout root;
+    private PreviewView previewView;
+    private LinearLayout hud;
+    private TextView statusText, liveText, timerText, latestText, calibrationText, fpsText;
+    private EditText weightInput, armInput, shoulderInput;
+    private Handler ui = new Handler(Looper.getMainLooper());
+    private ExecutorService cameraExecutor;
+    private PoseDetector poseDetector;
+    private SharedPreferences prefs;
+
+    private boolean processing = false;
+    private boolean activeTest = false;
+    private boolean calibrating = false;
+    private int selectedSeconds = 10;
+    private int sensitivity = 2;
+    private long testEndUptimeMs = 0;
+    private long poseFrames = 0;
+    private long fpsWindowStartMs = 0;
+    private long fpsWindowFrames = 0;
+    private double measuredFps = 0.0;
+
+    private double bodyWeightLb = 150.0;
+    private double armLengthIn = 27.0;
+    private double shoulderWidthIn = 17.0;
+    private double pxPerMeter = 0.0;
+    private double calibrationQuality = 0.0;
+    private final ArrayList<Double> calibrationSamples = new ArrayList<>();
+
+    private final Map<Integer, Track> tracks = new HashMap<>();
+    private final ArrayList<StrikeResult> currentResults = new ArrayList<>();
+    private PointF lastShoulderCenter = null;
+    private PointF lastHipCenter = null;
+    private long lastBodyTsNs = 0;
+    private double shoulderCenterSpeed = 0.0;
+    private double hipCenterSpeed = 0.0;
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        prefs = getSharedPreferences("strikevision_v2", MODE_PRIVATE);
+        cameraExecutor = Executors.newSingleThreadExecutor();
+        poseDetector = PoseDetection.getClient(
+                new PoseDetectorOptions.Builder()
+                        .setDetectorMode(PoseDetectorOptions.STREAM_MODE)
+                        .build());
+        loadProfile();
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION);
+        } else {
+            buildScreen();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == CAMERA_PERMISSION && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            buildScreen();
+        } else {
+            TextView denied = new TextView(this);
+            denied.setText("Camera permission is required for StrikeVision.");
+            denied.setTextColor(Color.WHITE);
+            denied.setTextSize(20);
+            denied.setGravity(Gravity.CENTER);
+            denied.setBackgroundColor(Color.BLACK);
+            setContentView(denied);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        try { poseDetector.close(); } catch (Throwable ignored) {}
+        try { cameraExecutor.shutdown(); } catch (Throwable ignored) {}
+        ui.removeCallbacksAndMessages(null);
+    }
+
+    private void buildScreen() {
+        root = new FrameLayout(this);
+        previewView = new PreviewView(this);
+        previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
+        root.addView(previewView, new FrameLayout.LayoutParams(-1, -1));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(Color.argb(68, 0, 0, 0));
+        hud = new LinearLayout(this);
+        hud.setOrientation(LinearLayout.VERTICAL);
+        hud.setPadding(22, 38, 22, 26);
+        scroll.addView(hud, new ScrollView.LayoutParams(-1, -2));
+        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(root);
+
+        center("STRIKEVISION 2", 28, Color.WHITE);
+        center("Velocity + Power Core", 14, Color.rgb(170, 255, 30));
+
+        statusText = center("Starting front camera...", 14, Color.rgb(170, 255, 30));
+        fpsText = center("Pose: 0 fps", 12, Color.LTGRAY);
+        timerText = center("Ready", 20, Color.WHITE);
+        liveText = center("Live speed: 0.0 mph", 18, Color.rgb(80, 160, 255));
+        calibrationText = center(calibrationLabel(), 13, Color.LTGRAY);
+        latestText = cardText("Latest strike", "No strike yet");
+
+        hud.addView(section("Fighter profile"));
+        LinearLayout profileRow = new LinearLayout(this);
+        profileRow.setOrientation(LinearLayout.HORIZONTAL);
+        weightInput = field("Weight lb", fmt(bodyWeightLb));
+        armInput = field("Shoulder→wrist in", fmt(armLengthIn));
+        shoulderInput = field("Shoulder width in", fmt(shoulderWidthIn));
+        profileRow.addView(weightInput);
+        profileRow.addView(armInput);
+        profileRow.addView(shoulderInput);
+        hud.addView(profileRow);
+
+        LinearLayout calRow = new LinearLayout(this);
+        calRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button calibrate = smallButton("Calibrate scale");
+        Button resetCal = smallButton("Reset scale");
+        calibrate.setOnClickListener(v -> beginCalibration());
+        resetCal.setOnClickListener(v -> resetCalibration());
+        calRow.addView(calibrate);
+        calRow.addView(resetCal);
+        hud.addView(calRow);
+
+        hud.addView(section("Test length"));
+        LinearLayout timeRow = new LinearLayout(this);
+        timeRow.setOrientation(LinearLayout.HORIZONTAL);
+        for (int seconds : new int[]{5, 10, 15, 30}) {
+            Button b = smallButton(seconds + "s");
+            b.setOnClickListener(v -> {
+                selectedSeconds = seconds;
+                statusText.setText(seconds + " second test selected");
+            });
+            timeRow.addView(b);
+        }
+        hud.addView(timeRow);
+
+        hud.addView(section("Strike filter"));
+        LinearLayout sensRow = new LinearLayout(this);
+        sensRow.setOrientation(LinearLayout.HORIZONTAL);
+        String[] names = {"Strict", "Balanced", "Sensitive"};
+        for (int i = 0; i < names.length; i++) {
+            final int s = i + 1;
+            Button b = smallButton(names[i]);
+            b.setOnClickListener(v -> {
+                sensitivity = s;
+                statusText.setText(names[s - 1] + " strike detection");
+            });
+            sensRow.addView(b);
+        }
+        hud.addView(sensRow);
+
+        View spacer = new View(this);
+        hud.addView(spacer, new LinearLayout.LayoutParams(1, 40));
+
+        Button start = largeButton("START 5-COUNT");
+        start.setOnClickListener(v -> startCountdown());
+        hud.addView(start);
+
+        LinearLayout bottomRow = new LinearLayout(this);
+        bottomRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button history = smallButton("History");
+        Button profile = smallButton("Save profile");
+        history.setOnClickListener(v -> showHistory());
+        profile.setOnClickListener(v -> {
+            if (readProfileInputs()) {
+                saveProfile();
+                statusText.setText("Profile saved");
+            }
+        });
+        bottomRow.addView(history);
+        bottomRow.addView(profile);
+        hud.addView(bottomRow);
+
+        center("Calibrate with one arm fully extended across the camera plane. Keep the phone still and test from the same position.", 11, Color.LTGRAY);
+        bindCamera();
+        startUiLoop();
+    }
+
+    private void bindCamera() {
+        ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(this);
+        future.addListener(() -> {
+            try {
+                ProcessCameraProvider provider = future.get();
+                Preview preview = new Preview.Builder().build();
+                preview.setSurfaceProvider(previewView.getSurfaceProvider());
+
+                ImageAnalysis analysis = new ImageAnalysis.Builder()
+                        .setTargetResolution(new Size(1280, 720))
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build();
+                analysis.setAnalyzer(cameraExecutor, this::analyzeFrame);
+
+                provider.unbindAll();
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_FRONT_CAMERA, preview, analysis);
+                statusText.setText("Pose live. Side view works best for punch-speed testing.");
+            } catch (Throwable t) {
+                statusText.setText("Camera error: " + t.getClass().getSimpleName());
+            }
+        }, ContextCompat.getMainExecutor(this));
+    }
+
+    @ExperimentalGetImage
+    private void analyzeFrame(ImageProxy proxy) {
+        if (processing) {
+            proxy.close();
+            return;
+        }
+        Image image = proxy.getImage();
+        if (image == null) {
+            proxy.close();
+            return;
+        }
+        processing = true;
+        long tsNs = proxy.getImageInfo().getTimestamp();
+        InputImage input = InputImage.fromMediaImage(image, proxy.getImageInfo().getRotationDegrees());
+        poseDetector.process(input)
+                .addOnSuccessListener(pose -> processPose(pose, tsNs))
+                .addOnCompleteListener(task -> {
+                    processing = false;
+                    proxy.close();
+                });
+    }
+
+    private void processPose(Pose pose, long tsNs) {
+        poseFrames++;
+        updateFps();
+
+        PoseLandmark ls = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER);
+        PoseLandmark rs = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER);
+        PoseLandmark lh = pose.getPoseLandmark(PoseLandmark.LEFT_HIP);
+        PoseLandmark rh = pose.getPoseLandmark(PoseLandmark.RIGHT_HIP);
+
+        PointF shoulderCenter = centerOf(ls, rs);
+        PointF hipCenter = centerOf(lh, rh);
+        PointF torso = centerOfPoints(shoulderCenter, hipCenter);
+        if (torso == null) return;
+
+        if (calibrating) collectCalibration(pose);
+        if (pxPerMeter <= 0.0) updateFallbackScale(ls, rs);
+        updateBodySpeeds(shoulderCenter, hipCenter, tsNs);
+
+        double fastest = 0.0;
+        String fastestName = "";
+        int[] weaponIds = {
+                PoseLandmark.LEFT_WRIST,
+                PoseLandmark.RIGHT_WRIST,
+                PoseLandmark.LEFT_ANKLE,
+                PoseLandmark.RIGHT_ANKLE
+        };
+        for (int id : weaponIds) {
+            PoseLandmark lm = pose.getPoseLandmark(id);
+            if (!good(lm)) continue;
+            Track tr = tracks.get(id);
+            if (tr == null) {
+                tr = new Track(id);
+                tracks.put(id, tr);
+            }
+            double confidence = lm.getInFrameLikelihood();
+            StrikeResult emitted = tr.update(lm.getPosition(), torso, tsNs, currentScale(), confidence, pose);
+            if (tr.velocityMps > fastest) {
+                fastest = tr.velocityMps;
+                fastestName = limbName(id);
+            }
+            if (emitted != null) onStrike(emitted);
+        }
+
+        final double liveMph = fastest * MPS_TO_MPH;
+        final String liveName = fastestName;
+        ui.post(() -> {
+            if (liveText != null) liveText.setText(String.format(Locale.US, "%s  %.1f mph", liveName, liveMph));
+        });
+    }
+
+    private double currentScale() {
+        return pxPerMeter > 1.0 ? pxPerMeter : 500.0;
+    }
+
+    private void beginCalibration() {
+        if (!readProfileInputs()) return;
+        calibrating = true;
+        calibrationSamples.clear();
+        statusText.setText("CALIBRATING: fully extend either arm across the camera plane and hold briefly.");
+    }
+
+    private void collectCalibration(Pose pose) {
+        PoseLandmark ls = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER);
+        PoseLandmark rs = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER);
+        PoseLandmark lw = pose.getPoseLandmark(PoseLandmark.LEFT_WRIST);
+        PoseLandmark rw = pose.getPoseLandmark(PoseLandmark.RIGHT_WRIST);
+        double left = good(ls) && good(lw) ? dist(ls.getPosition(), lw.getPosition()) : 0.0;
+        double right = good(rs) && good(rw) ? dist(rs.getPosition(), rw.getPosition()) : 0.0;
+        double sample = Math.max(left, right);
+        if (sample < 100.0) return;
+        calibrationSamples.add(sample);
+        if (calibrationSamples.size() >= 15) {
+            Collections.sort(calibrationSamples);
+            double median = calibrationSamples.get(calibrationSamples.size() / 2);
+            double spread = percentile(calibrationSamples, 0.8) - percentile(calibrationSamples, 0.2);
+            double meters = armLengthIn * 0.0254;
+            pxPerMeter = median / Math.max(0.30, meters);
+            calibrationQuality = clamp(1.0 - spread / Math.max(1.0, median) * 2.0, 0.65, 1.0);
+            prefs.edit()
+                    .putFloat("pxPerMeter", (float) pxPerMeter)
+                    .putFloat("calQuality", (float) calibrationQuality)
+                    .apply();
+            calibrating = false;
+            ui.post(() -> {
+                calibrationText.setText(calibrationLabel());
+                statusText.setText("Scale calibrated. Keep the same camera distance for the test.");
+            });
+        }
+    }
+
+    private void resetCalibration() {
+        pxPerMeter = 0.0;
+        calibrationQuality = 0.0;
+        calibrationSamples.clear();
+        prefs.edit().remove("pxPerMeter").remove("calQuality").apply();
+        calibrationText.setText(calibrationLabel());
+        statusText.setText("Scale reset. Calibrate again for accurate mph.");
+    }
+
+    private void updateFallbackScale(PoseLandmark ls, PoseLandmark rs) {
+        if (!good(ls) || !good(rs)) return;
+        double shoulderPx = dist(ls.getPosition(), rs.getPosition());
+        if (shoulderPx < 30) return;
+        double meters = shoulderWidthIn * 0.0254;
+        pxPerMeter = shoulderPx / Math.max(0.20, meters);
+        calibrationQuality = 0.42;
+    }
+
+    private void updateBodySpeeds(PointF shoulderCenter, PointF hipCenter, long tsNs) {
+        if (lastBodyTsNs > 0) {
+            double dt = (tsNs - lastBodyTsNs) / 1_000_000_000.0;
+            if (dt >= 0.008 && dt <= 0.20 && currentScale() > 1.0) {
+                if (shoulderCenter != null && lastShoulderCenter != null) {
+                    double v = dist(shoulderCenter, lastShoulderCenter) / currentScale() / dt;
+                    shoulderCenterSpeed = shoulderCenterSpeed * 0.55 + v * 0.45;
+                }
+                if (hipCenter != null && lastHipCenter != null) {
+                    double v = dist(hipCenter, lastHipCenter) / currentScale() / dt;
+                    hipCenterSpeed = hipCenterSpeed * 0.55 + v * 0.45;
+                }
+            }
+        }
+        if (shoulderCenter != null) lastShoulderCenter = new PointF(shoulderCenter.x, shoulderCenter.y);
+        if (hipCenter != null) lastHipCenter = new PointF(hipCenter.x, hipCenter.y);
+        lastBodyTsNs = tsNs;
+    }
+
+    private void startCountdown() {
+        if (activeTest) return;
+        if (!readProfileInputs()) return;
+        saveProfile();
+        if (pxPerMeter <= 1.0 || calibrationQuality < 0.60) {
+            statusText.setText("Using approximate body scale. Calibrate first for stronger accuracy.");
+        }
+        currentResults.clear();
+        resetTrackState();
+        timerText.setText("5");
+        for (int i = 4; i >= 1; i--) {
+            final int n = i;
+            ui.postDelayed(() -> timerText.setText(String.valueOf(n)), (5L - i) * 1000L);
+        }
+        ui.postDelayed(() -> {
+            activeTest = true;
+            testEndUptimeMs = android.os.SystemClock.uptimeMillis() + selectedSeconds * 1000L;
+            timerText.setText("GO");
+            statusText.setText("Tracking peak limb velocity + power metrics");
+        }, 5000L);
+        ui.postDelayed(this::finishTest, 5000L + selectedSeconds * 1000L + 250L);
+    }
+
+    private void finishTest() {
+        if (!activeTest) return;
+        activeTest = false;
+        for (Track tr : tracks.values()) {
+            StrikeResult tail = tr.forceFinish();
+            if (tail != null) onStrike(tail);
+        }
+        timerText.setText("Complete");
+        if (currentResults.isEmpty()) {
+            statusText.setText("No clean strike burst detected. Try Sensitive or recalibrate.");
+            new AlertDialog.Builder(this)
+                    .setTitle("Round complete")
+                    .setMessage("No clean strike burst detected. Keep the phone fixed, stay side-on, and keep the striking limb in frame.")
+                    .setPositiveButton("OK", null)
+                    .show();
+            return;
+        }
+        double fastest = 0, avg = 0, energy = 0;
+        StrikeResult bestEnergy = null;
+        for (StrikeResult r : currentResults) {
+            fastest = Math.max(fastest, r.peakMph);
+            avg += r.peakMph;
+            if (r.energyFtLb > energy) {
+                energy = r.energyFtLb;
+                bestEnergy = r;
+            }
+        }
+        avg /= currentResults.size();
+        statusText.setText(currentResults.size() + " strikes saved");
+        String msg = String.format(Locale.US,
+                "%d strikes\nFastest: %.1f mph\nAverage peak: %.1f mph\nHighest camera-estimated kinetic energy: %.1f ft·lbf%s",
+                currentResults.size(), fastest, avg, energy,
+                bestEnergy == null ? "" : "\nBest energy strike: " + bestEnergy.name);
+        new AlertDialog.Builder(this)
+                .setTitle("StrikeVision round")
+                .setMessage(msg)
+                .setPositiveButton("Run again", (d, w) -> timerText.setText("Ready"))
+                .setNegativeButton("History", (d, w) -> showHistory())
+                .show();
+    }
+
+    private void onStrike(StrikeResult result) {
+        if (!activeTest) return;
+        currentResults.add(result);
+        saveHistory(result);
+        String detail = String.format(Locale.US,
+                "%s\n%.1f mph peak\n%.0f ft/s² peak accel\nEffective mass: %.1f lb\nMomentum: %.1f lbm·ft/s\nKinetic energy: %.1f ft·lbf\nEstimated force window: %.0f–%.0f lbf\nConfidence: %.0f%%",
+                result.name,
+                result.peakMph,
+                result.peakAccelFt,
+                result.effectiveMassLb,
+                result.momentumImperial,
+                result.energyFtLb,
+                result.forceLowLbf,
+                result.forceHighLbf,
+                result.confidence * 100.0);
+        ui.post(() -> latestText.setText(detail));
+    }
+
+    private void resetTrackState() {
+        tracks.clear();
+        lastShoulderCenter = null;
+        lastHipCenter = null;
+        lastBodyTsNs = 0;
+        shoulderCenterSpeed = 0;
+        hipCenterSpeed = 0;
+    }
+
+    private void updateFps() {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (fpsWindowStartMs == 0) fpsWindowStartMs = now;
+        fpsWindowFrames++;
+        long elapsed = now - fpsWindowStartMs;
+        if (elapsed >= 1000) {
+            measuredFps = fpsWindowFrames * 1000.0 / elapsed;
+            fpsWindowFrames = 0;
+            fpsWindowStartMs = now;
+        }
+    }
+
+    private void startUiLoop() {
+        ui.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (fpsText != null) fpsText.setText(String.format(Locale.US, "Pose: %.1f fps | frames: %d", measuredFps, poseFrames));
+                if (activeTest && timerText != null) {
+                    long left = Math.max(0, testEndUptimeMs - android.os.SystemClock.uptimeMillis());
+                    timerText.setText(String.format(Locale.US, "%.1fs", left / 1000.0));
+                }
+                if (calibrationText != null) calibrationText.setText(calibrationLabel());
+                ui.postDelayed(this, 250);
+            }
+        }, 250);
+    }
+
+    private String calibrationLabel() {
+        if (pxPerMeter > 1.0 && calibrationQuality >= 0.60) {
+            return String.format(Locale.US, "Scale: calibrated | confidence %.0f%%", calibrationQuality * 100.0);
+        }
+        if (pxPerMeter > 1.0) return "Scale: approximate shoulder-width fallback";
+        return "Scale: not calibrated";
+    }
+
+    private boolean readProfileInputs() {
+        try {
+            bodyWeightLb = Double.parseDouble(weightInput.getText().toString().trim());
+            armLengthIn = Double.parseDouble(armInput.getText().toString().trim());
+            shoulderWidthIn = Double.parseDouble(shoulderInput.getText().toString().trim());
+            if (bodyWeightLb < 60 || bodyWeightLb > 500 || armLengthIn < 15 || armLengthIn > 45 || shoulderWidthIn < 8 || shoulderWidthIn > 30) {
+                throw new IllegalArgumentException();
+            }
+            return true;
+        } catch (Throwable t) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Check fighter profile")
+                    .setMessage("Use pounds and inches. Example: 150 lb, 27 in shoulder-to-wrist, 17 in shoulder width.")
+                    .setPositiveButton("OK", null)
+                    .show();
+            return false;
+        }
+    }
+
+    private void loadProfile() {
+        bodyWeightLb = prefs.getFloat("weightLb", 150f);
+        armLengthIn = prefs.getFloat("armIn", 27f);
+        shoulderWidthIn = prefs.getFloat("shoulderIn", 17f);
+        pxPerMeter = prefs.getFloat("pxPerMeter", 0f);
+        calibrationQuality = prefs.getFloat("calQuality", 0f);
+    }
+
+    private void saveProfile() {
+        prefs.edit()
+                .putFloat("weightLb", (float) bodyWeightLb)
+                .putFloat("armIn", (float) armLengthIn)
+                .putFloat("shoulderIn", (float) shoulderWidthIn)
+                .apply();
+    }
+
+    private void saveHistory(StrikeResult r) {
+        try {
+            JSONArray arr;
+            String raw = prefs.getString("history", "[]");
+            try { arr = new JSONArray(raw); } catch (Throwable t) { arr = new JSONArray(); }
+            JSONObject o = new JSONObject();
+            o.put("time", System.currentTimeMillis());
+            o.put("name", r.name);
+            o.put("mph", r.peakMph);
+            o.put("accelFt", r.peakAccelFt);
+            o.put("effMassLb", r.effectiveMassLb);
+            o.put("momentum", r.momentumImperial);
+            o.put("energyFtLb", r.energyFtLb);
+            o.put("forceLow", r.forceLowLbf);
+            o.put("forceHigh", r.forceHighLbf);
+            o.put("confidence", r.confidence);
+            arr.put(o);
+            JSONArray trimmed = new JSONArray();
+            int start = Math.max(0, arr.length() - 200);
+            for (int i = start; i < arr.length(); i++) trimmed.put(arr.get(i));
+            prefs.edit().putString("history", trimmed.toString()).apply();
+        } catch (Throwable ignored) {}
+    }
+
+    private void showHistory() {
+        try {
+            JSONArray arr = new JSONArray(prefs.getString("history", "[]"));
+            if (arr.length() == 0) {
+                new AlertDialog.Builder(this).setTitle("Strike history").setMessage("No saved strikes yet.").setPositiveButton("OK", null).show();
+                return;
+            }
+            StringBuilder sb = new StringBuilder();
+            int start = Math.max(0, arr.length() - 30);
+            for (int i = arr.length() - 1; i >= start; i--) {
+                JSONObject o = arr.getJSONObject(i);
+                sb.append('#').append(i + 1).append(' ')
+                        .append(o.optString("name", "Strike")).append('\n')
+                        .append(String.format(Locale.US, "%.1f mph | %.1f ft·lbf | %.0f–%.0f lbf | %.0f%% confidence\n\n",
+                                o.optDouble("mph"), o.optDouble("energyFtLb"), o.optDouble("forceLow"), o.optDouble("forceHigh"), o.optDouble("confidence") * 100.0));
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle("Recent strike history")
+                    .setMessage(sb.toString())
+                    .setPositiveButton("Close", null)
+                    .setNegativeButton("Clear history", (d, w) -> {
+                        prefs.edit().remove("history").apply();
+                        statusText.setText("History cleared");
+                    })
+                    .show();
+        } catch (Throwable t) {
+            new AlertDialog.Builder(this).setTitle("History").setMessage("History could not be read.").setPositiveButton("OK", null).show();
+        }
+    }
+
+    private class Track {
+        final int id;
+        PointF smoothed = null;
+        PointF previousRelative = null;
+        long previousTsNs = 0;
+        double velocityMps = 0;
+        double previousVelocityMps = 0;
+        final double[] v3 = new double[3];
+        int v3Count = 0;
+        int v3Index = 0;
+        boolean burst = false;
+        double peakMps = 0;
+        double peakAccelMps2 = 0;
+        double peakConfidence = 0;
+        double maxElbowMps = 0;
+        double maxShoulderMps = 0;
+        double maxHipMps = 0;
+        long lastAboveNs = 0;
+        long lastEmitNs = 0;
+
+        Track(int id) { this.id = id; }
+
+        StrikeResult update(PointF raw, PointF torso, long tsNs, double scalePxM, double lmConfidence, Pose pose) {
+            if (smoothed == null) {
+                smoothed = new PointF(raw.x, raw.y);
+                previousRelative = new PointF(raw.x - torso.x, raw.y - torso.y);
+                previousTsNs = tsNs;
+                return null;
+            }
+            smoothed = new PointF(
+                    (float) (smoothed.x * 0.28 + raw.x * 0.72),
+                    (float) (smoothed.y * 0.28 + raw.y * 0.72));
+            PointF relative = new PointF(smoothed.x - torso.x, smoothed.y - torso.y);
+            double dt = (tsNs - previousTsNs) / 1_000_000_000.0;
+            if (dt < 0.008 || dt > 0.20) {
+                previousRelative = relative;
+                previousTsNs = tsNs;
+                previousVelocityMps = 0;
+                velocityMps = 0;
+                return null;
+            }
+
+            double instant = dist(relative, previousRelative) / Math.max(1.0, scalePxM) / dt;
+            v3[v3Index] = instant;
+            v3Index = (v3Index + 1) % 3;
+            v3Count = Math.min(3, v3Count + 1);
+            double robust = medianVelocity();
+            velocityMps = previousVelocityMps * 0.32 + robust * 0.68;
+            double accel = (velocityMps - previousVelocityMps) / dt;
+
+            previousRelative = relative;
+            previousTsNs = tsNs;
+            previousVelocityMps = velocityMps;
+
+            if (!activeTest) return null;
+            double threshold = detectionThreshold(id);
+            boolean above = velocityMps >= threshold;
+            if (!burst) {
+                boolean enoughAccel = accel > (isHand(id) ? 5.0 : 7.0);
+                if (above && enoughAccel && tsNs - lastEmitNs > 240_000_000L) {
+                    burst = true;
+                    peakMps = velocityMps;
+                    peakAccelMps2 = Math.max(0, accel);
+                    peakConfidence = lmConfidence;
+                    maxElbowMps = supportElbowSpeed(pose, id, torso, tsNs, scalePxM);
+                    maxShoulderMps = shoulderCenterSpeed;
+                    maxHipMps = hipCenterSpeed;
+                    lastAboveNs = tsNs;
+                }
+                return null;
+            }
+
+            if (above) lastAboveNs = tsNs;
+            if (velocityMps > peakMps) {
+                peakMps = velocityMps;
+                peakConfidence = lmConfidence;
+            }
+            peakAccelMps2 = Math.max(peakAccelMps2, Math.max(0, accel));
+            maxElbowMps = Math.max(maxElbowMps, supportElbowSpeed(pose, id, torso, tsNs, scalePxM));
+            maxShoulderMps = Math.max(maxShoulderMps, shoulderCenterSpeed);
+            maxHipMps = Math.max(maxHipMps, hipCenterSpeed);
+
+            if (tsNs - lastAboveNs > 120_000_000L) return finishBurst(tsNs);
+            return null;
+        }
+
+        StrikeResult forceFinish() {
+            if (!burst) return null;
+            return finishBurst(System.nanoTime());
+        }
+
+        private StrikeResult finishBurst(long tsNs) {
+            burst = false;
+            lastEmitNs = tsNs;
+            if (peakMps < detectionThreshold(id) || peakMps > 35.0) {
+                resetBurst();
+                return null;
+            }
+            double kg = bodyWeightLb / KG_TO_LB;
+            double baseFraction = isHand(id) ? 0.065 : 0.16;
+            double elbowRatio = clamp(maxElbowMps / Math.max(0.1, peakMps), 0, 1);
+            double shoulderRatio = clamp(maxShoulderMps / Math.max(0.1, peakMps), 0, 0.65);
+            double hipRatio = clamp(maxHipMps / Math.max(0.1, peakMps), 0, 0.50);
+            double chain = clamp(0.72 + 0.30 * elbowRatio + 0.22 * shoulderRatio + 0.18 * hipRatio, 0.65, 1.22);
+            double effectiveMassKg = kg * baseFraction * chain;
+            double maxFraction = isHand(id) ? 0.11 : 0.28;
+            effectiveMassKg = Math.min(effectiveMassKg, kg * maxFraction);
+            double momentum = effectiveMassKg * peakMps;
+            double energyJ = 0.5 * effectiveMassKg * peakMps * peakMps;
+            double forceLowN = momentum / 0.030;
+            double forceHighN = momentum / 0.010;
+
+            double fpsQuality = clamp(measuredFps / 30.0, 0.45, 1.0);
+            double speedSanity = peakMps > 1.0 && peakMps < 25.0 ? 1.0 : 0.75;
+            double conf = clamp(peakConfidence * Math.max(0.35, calibrationQuality) * fpsQuality * speedSanity, 0.15, 0.99);
+
+            StrikeResult r = new StrikeResult();
+            r.name = limbName(id);
+            r.peakMph = peakMps * MPS_TO_MPH;
+            r.peakAccelFt = peakAccelMps2 * MPS2_TO_FTPS2;
+            r.effectiveMassLb = effectiveMassKg * KG_TO_LB;
+            r.momentumImperial = momentum * KGMPS_TO_LBMFTPS;
+            r.energyFtLb = energyJ * J_TO_FTLB;
+            r.forceLowLbf = forceLowN * N_TO_LBF;
+            r.forceHighLbf = forceHighN * N_TO_LBF;
+            r.confidence = conf;
+            resetBurst();
+            return r;
+        }
+
+        private void resetBurst() {
+            peakMps = 0;
+            peakAccelMps2 = 0;
+            peakConfidence = 0;
+            maxElbowMps = 0;
+            maxShoulderMps = 0;
+            maxHipMps = 0;
+            lastAboveNs = 0;
+        }
+
+        private double medianVelocity() {
+            if (v3Count == 1) return v3[0];
+            if (v3Count == 2) return (v3[0] + v3[1]) / 2.0;
+            double[] copy = Arrays.copyOf(v3, 3);
+            Arrays.sort(copy);
+            return copy[1];
+        }
+    }
+
+    private double supportElbowSpeed(Pose pose, int weaponId, PointF torso, long tsNs, double scalePxM) {
+        int elbowId;
+        if (weaponId == PoseLandmark.LEFT_WRIST) elbowId = PoseLandmark.LEFT_ELBOW;
+        else if (weaponId == PoseLandmark.RIGHT_WRIST) elbowId = PoseLandmark.RIGHT_ELBOW;
+        else if (weaponId == PoseLandmark.LEFT_ANKLE) elbowId = PoseLandmark.LEFT_KNEE;
+        else elbowId = PoseLandmark.RIGHT_KNEE;
+        PoseLandmark joint = pose.getPoseLandmark(elbowId);
+        if (!good(joint)) return 0;
+        Track jointTrack = tracks.get(elbowId);
+        if (jointTrack == null) {
+            jointTrack = new Track(elbowId);
+            tracks.put(elbowId, jointTrack);
+        }
+        boolean wasActive = activeTest;
+        activeTest = false;
+        jointTrack.update(joint.getPosition(), torso, tsNs, scalePxM, joint.getInFrameLikelihood(), pose);
+        activeTest = wasActive;
+        return jointTrack.velocityMps;
+    }
+
+    private double detectionThreshold(int id) {
+        double base = isHand(id) ? 1.8 : 2.3;
+        if (sensitivity == 1) return base * 1.45;
+        if (sensitivity == 3) return base * 0.72;
+        return base;
+    }
+
+    private boolean isHand(int id) {
+        return id == PoseLandmark.LEFT_WRIST || id == PoseLandmark.RIGHT_WRIST;
+    }
+
+    private String limbName(int id) {
+        if (id == PoseLandmark.LEFT_WRIST) return "Left hand";
+        if (id == PoseLandmark.RIGHT_WRIST) return "Right hand";
+        if (id == PoseLandmark.LEFT_ANKLE) return "Left kick";
+        if (id == PoseLandmark.RIGHT_ANKLE) return "Right kick";
+        return "Strike";
+    }
+
+    private static class StrikeResult {
+        String name;
+        double peakMph;
+        double peakAccelFt;
+        double effectiveMassLb;
+        double momentumImperial;
+        double energyFtLb;
+        double forceLowLbf;
+        double forceHighLbf;
+        double confidence;
+    }
+
+    private boolean good(PoseLandmark lm) {
+        return lm != null && lm.getInFrameLikelihood() >= 0.45f;
+    }
+
+    private PointF centerOf(PoseLandmark a, PoseLandmark b) {
+        if (good(a) && good(b)) {
+            return new PointF((a.getPosition().x + b.getPosition().x) / 2f, (a.getPosition().y + b.getPosition().y) / 2f);
+        }
+        if (good(a)) return a.getPosition();
+        if (good(b)) return b.getPosition();
+        return null;
+    }
+
+    private PointF centerOfPoints(PointF a, PointF b) {
+        if (a != null && b != null) return new PointF((a.x + b.x) / 2f, (a.y + b.y) / 2f);
+        return a != null ? a : b;
+    }
+
+    private double dist(PointF a, PointF b) {
+        double dx = a.x - b.x;
+        double dy = a.y - b.y;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    private double percentile(List<Double> sorted, double p) {
+        if (sorted.isEmpty()) return 0;
+        int index = (int) Math.round((sorted.size() - 1) * p);
+        return sorted.get(Math.max(0, Math.min(sorted.size() - 1, index)));
+    }
+
+    private double clamp(double x, double lo, double hi) {
+        return Math.max(lo, Math.min(hi, x));
+    }
+
+    private String fmt(double x) {
+        if (Math.abs(x - Math.round(x)) < 0.01) return String.valueOf((int) Math.round(x));
+        return String.format(Locale.US, "%.1f", x);
+    }
+
+    private TextView center(String text, int size, int color) {
+        TextView tv = text(text, size, color, Typeface.BOLD);
+        tv.setGravity(Gravity.CENTER);
+        hud.addView(tv);
+        return tv;
+    }
+
+    private TextView section(String text) {
+        TextView tv = text(text, 14, Color.WHITE, Typeface.BOLD);
+        tv.setPadding(0, 20, 0, 8);
+        return tv;
+    }
+
+    private TextView cardText(String title, String body) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(20, 16, 20, 16);
+        card.setBackground(roundBg(Color.argb(205, 18, 18, 18)));
+        TextView h = text(title, 15, Color.WHITE, Typeface.BOLD);
+        TextView b = text(body, 15, Color.rgb(225, 225, 225), Typeface.NORMAL);
+        card.addView(h);
+        card.addView(b);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, 12, 0, 8);
+        hud.addView(card, lp);
+        return b;
+    }
+
+    private EditText field(String hint, String value) {
+        EditText e = new EditText(this);
+        e.setHint(hint);
+        e.setText(value);
+        e.setTextColor(Color.WHITE);
+        e.setHintTextColor(Color.LTGRAY);
+        e.setTextSize(12);
+        e.setSingleLine(true);
+        e.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, 88, 1);
+        lp.setMargins(4, 0, 4, 0);
+        e.setLayoutParams(lp);
+        e.setBackground(roundBg(Color.argb(190, 30, 30, 30)));
+        e.setPadding(12, 0, 12, 0);
+        return e;
+    }
+
+    private TextView text(String s, int size, int color, int style) {
+        TextView tv = new TextView(this);
+        tv.setText(s);
+        tv.setTextSize(size);
+        tv.setTextColor(color);
+        tv.setTypeface(Typeface.DEFAULT, style);
+        tv.setPadding(0, 5, 0, 5);
+        return tv;
+    }
+
+    private Button largeButton(String label) {
+        Button b = new Button(this);
+        b.setText(label);
+        b.setAllCaps(false);
+        b.setTextColor(Color.WHITE);
+        b.setTextSize(17);
+        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        b.setBackground(roundBg(Color.rgb(45, 120, 245)));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 112);
+        lp.setMargins(0, 8, 0, 8);
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    private Button smallButton(String label) {
+        Button b = largeButton(label);
+        b.setTextSize(12);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, 90, 1);
+        lp.setMargins(4, 4, 4, 4);
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    private GradientDrawable roundBg(int color) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(color);
+        g.setCornerRadius(22f);
+        g.setStroke(1, Color.rgb(65, 65, 65));
+        return g;
+    }
 }
