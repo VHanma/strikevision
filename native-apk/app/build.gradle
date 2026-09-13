@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace 'com.strikevision.app'
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId 'com.strikevision.v2'
