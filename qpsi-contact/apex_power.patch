@@ -1,0 +1,316 @@
+--- qpsi_project/app/src/main/java/com/aether/qpsicontact/BeaconEngine.kt
++++ qpsi_project/app/src/main/java/com/aether/qpsicontact/BeaconEngine.kt
+@@ -16,6 +16,7 @@
+ import kotlin.math.PI
+ import kotlin.math.cos
+ import kotlin.math.sin
++import kotlin.math.tanh
+ 
+ class BeaconEngine {
+     enum class Profile(
+@@ -46,6 +47,13 @@
+             code = "11110001011010011100011010010111",
+             pulseMs = 138,
+         ),
++        APEX(
++            title = "Apex Burst",
++            subtitle = "Maximum-density multi-band beacon",
++            carriersHz = doubleArrayOf(432.0, 864.0, 963.0, 1728.0, 2894.0, 5788.0, 8670.0, 11576.0, 15360.0, 18432.0),
++            code = "111011101110101111001110111010111100111011101011",
++            pulseMs = 54,
++        ),
+         PSI_FUSION(
+             title = "Psi Fusion",
+             subtitle = "Signal windows separated by receptive silence",
+@@ -174,32 +182,47 @@
+     ): ShortArray {
+         val sampleCount = ((sampleRate * durationMs) / 1000).coerceAtLeast(1)
+         val output = ShortArray(sampleCount * 2)
+-        if (!enabled || volume <= 0f) return output
++        if (volume <= 0f) return output
+ 
+         val ratios = if (fourVoices) {
+-            doubleArrayOf(1.0, 1.013, 1.027, 1.041)
++            doubleArrayOf(0.50, 0.667, 1.0, 1.011, 1.027, 1.50, 2.0, 3.0)
+         } else {
+-            doubleArrayOf(1.0)
++            doubleArrayOf(0.50, 1.0, 2.0)
+         }
+-        val gain = (0.26f * volume.coerceIn(0f, 1f)) / ratios.size
++        val pulseGain = if (enabled) 1.0 else 0.16
++        val master = 0.96 * volume.coerceIn(0f, 1f) * pulseGain
++        val phaseOffset = phaseSeed * 0.193
+ 
+         for (sample in 0 until sampleCount) {
+             val edge = raisedCosineEdge(sample, sampleCount)
++            val time = sample.toDouble() / sampleRate
++            val tremolo = 0.82 + 0.18 * sin(2.0 * PI * 7.83 * time + phaseOffset)
+             var left = 0.0
+             var right = 0.0
+ 
+             ratios.forEachIndexed { voice, ratio ->
+-                val hz = (baseHz * ratio).coerceAtMost(19_000.0)
+-                val phase = 2.0 * PI * hz * sample / sampleRate + phaseSeed * 0.17 + voice * 0.61
+-                val value = sin(phase)
++                val hz = (baseHz * ratio).coerceIn(180.0, 19_200.0)
++                val phase = 2.0 * PI * hz * time + phaseOffset + voice * 0.73
++                val harmonic = sin(phase) + 0.34 * sin(phase * 2.0) + 0.18 * sin(phase * 3.0)
+                 val pan = if (ratios.size == 1) 0.5 else voice.toDouble() / (ratios.size - 1)
+-                left += value * (1.0 - pan * 0.58)
+-                right += value * (0.42 + pan * 0.58)
++                left += harmonic * (1.0 - pan * 0.72)
++                right += harmonic * (0.28 + pan * 0.72)
+             }
+ 
+-            output[sample * 2] = (left * edge * gain * Short.MAX_VALUE)
++            // Speaker-range reinforcement keeps the signal forceful even when the highest carriers are weak.
++            val supportA = sin(2.0 * PI * 432.0 * time + phaseOffset)
++            val supportB = sin(2.0 * PI * 963.0 * time - phaseOffset * 0.7)
++            left += supportA * 0.72 + supportB * 0.46
++            right += supportA * 0.46 + supportB * 0.72
++
++            val normalizedLeft = left / (ratios.size * 0.52 + 1.2)
++            val normalizedRight = right / (ratios.size * 0.52 + 1.2)
++            val shapedLeft = tanh(normalizedLeft * 2.35)
++            val shapedRight = tanh(normalizedRight * 2.35)
++
++            output[sample * 2] = (shapedLeft * edge * tremolo * master * Short.MAX_VALUE)
+                 .toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+-            output[sample * 2 + 1] = (right * edge * gain * Short.MAX_VALUE)
++            output[sample * 2 + 1] = (shapedRight * edge * tremolo * master * Short.MAX_VALUE)
+                 .toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+         }
+         return output
+--- qpsi_project/app/src/main/java/com/aether/qpsicontact/MainActivity.kt
++++ qpsi_project/app/src/main/java/com/aether/qpsicontact/MainActivity.kt
+@@ -1,8 +1,11 @@
+ package com.aether.qpsicontact
+ 
++import android.content.Context
+ import android.os.Build
+ import android.os.Bundle
+ import android.os.SystemClock
++import android.os.VibrationEffect
++import android.os.Vibrator
+ import android.view.View
+ import android.view.WindowInsets
+ import android.view.WindowInsetsController
+@@ -131,11 +134,12 @@
+ 
+     var sectionName by rememberSaveable { mutableStateOf(Section.CONTACT.name) }
+     var modeName by rememberSaveable { mutableStateOf(ContactMode.FUSION.name) }
+-    var profileName by rememberSaveable { mutableStateOf(BeaconEngine.Profile.SPHERE.name) }
++    var profileName by rememberSaveable { mutableStateOf(BeaconEngine.Profile.APEX.name) }
+     var simulateFour by rememberSaveable { mutableStateOf(true) }
+     var groupCoherence by rememberSaveable { mutableStateOf(false) }
+-    var volume by rememberSaveable { mutableFloatStateOf(0.72f) }
+-    var visualStrength by rememberSaveable { mutableFloatStateOf(0.82f) }
++    var volume by rememberSaveable { mutableFloatStateOf(1.0f) }
++    var visualStrength by rememberSaveable { mutableFloatStateOf(1.0f) }
++    var vibrationEnabled by rememberSaveable { mutableStateOf(true) }
+     var invitation by rememberSaveable {
+         mutableStateOf("We invite peaceful, visible contact at this location. Please respond in a clear and unmistakable way.")
+     }
+@@ -174,6 +178,18 @@
+         }
+     }
+ 
++    LaunchedEffect(running, pulse.index, pulse.cycle, pulse.active, vibrationEnabled) {
++        if (running && vibrationEnabled && pulse.active) {
++            val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++                vibrator?.vibrate(VibrationEffect.createOneShot(42L, 180))
++            } else {
++                @Suppress("DEPRECATION")
++                vibrator?.vibrate(42L)
++            }
++        }
++    }
++
+     DisposableEffect(running) {
+         val activity = context as? ComponentActivity
+         val previousBrightness = activity?.window?.attributes?.screenBrightness ?: -1f
+@@ -331,6 +347,7 @@
+                     groupCoherence = groupCoherence,
+                     volume = volume,
+                     visualStrength = visualStrength,
++                    vibrationEnabled = vibrationEnabled,
+                     running = running,
+                     elapsedSeconds = elapsedMs / 1000L,
+                     pulse = pulse,
+@@ -342,6 +359,7 @@
+                     onGroup = { groupCoherence = it },
+                     onVolume = { volume = it },
+                     onVisual = { visualStrength = it },
++                    onVibration = { vibrationEnabled = it },
+                     onStartStop = { if (running) stopSession() else startSession() },
+                 )
+ 
+@@ -497,6 +515,7 @@
+     groupCoherence: Boolean,
+     volume: Float,
+     visualStrength: Float,
++    vibrationEnabled: Boolean,
+     running: Boolean,
+     elapsedSeconds: Long,
+     pulse: BeaconEngine.Pulse,
+@@ -508,6 +527,7 @@
+     onGroup: (Boolean) -> Unit,
+     onVolume: (Float) -> Unit,
+     onVisual: (Float) -> Unit,
++    onVibration: (Boolean) -> Unit,
+     onStartStop: () -> Unit,
+ ) {
+     GlassPanel {
+@@ -580,6 +600,15 @@
+             )
+ 
+             Spacer(Modifier.height(8.dp))
++            ToggleLine(
++                title = "Pulse vibration",
++                subtitle = "Synchronizes the phone motor with active code bursts",
++                checked = vibrationEnabled,
++                enabled = !running,
++                onChecked = onVibration,
++            )
++
++            Spacer(Modifier.height(8.dp))
+             SmallLabel("SIGNAL VOLUME ${(volume * 100).toInt()}%")
+             Slider(
+                 value = volume,
+@@ -876,44 +905,55 @@
+     strength: Float,
+     modifier: Modifier = Modifier,
+ ) {
++    val active = running && mode != ContactMode.PSIONIC && pulse.active
+     val targetColor = when {
+         !running -> Color(0xFF050607)
+-        mode == ContactMode.PSIONIC -> Color(0xFF111124)
+-        pulse.active -> when (pulse.profile) {
+-            BeaconEngine.Profile.SPHERE -> Color(0xFF052F38)
+-            BeaconEngine.Profile.ATOMIC -> Color(0xFF383305)
+-            BeaconEngine.Profile.MACHINE -> Color(0xFF32122E)
+-            BeaconEngine.Profile.PSI_FUSION -> Color(0xFF1E1538)
++        mode == ContactMode.PSIONIC -> Color(0xFF120B27)
++        active -> when (pulse.profile) {
++            BeaconEngine.Profile.SPHERE -> Color(0xFF00677A)
++            BeaconEngine.Profile.ATOMIC -> Color(0xFF766600)
++            BeaconEngine.Profile.MACHINE -> Color(0xFF741267)
++            BeaconEngine.Profile.APEX -> Color(0xFF0068A8)
++            BeaconEngine.Profile.PSI_FUSION -> Color(0xFF4B2388)
+         }
+-        else -> Color(0xFF07080B)
++        else -> Color(0xFF020306)
+     }
+     val background by animateColorAsState(targetValue = targetColor, label = "contactBackground")
+     val targetIntensity = when {
+         !running -> 0.08f
+-        mode == ContactMode.PSIONIC -> (0.25 + 0.16 * sin(elapsedMs / 2200.0)).toFloat()
+-        pulse.active -> strength
+-        else -> 0.10f
++        mode == ContactMode.PSIONIC -> (0.38 + 0.26 * sin(elapsedMs / 900.0)).toFloat()
++        active -> strength.coerceIn(0.15f, 1f)
++        else -> 0.05f
+     }
+     val intensity by animateFloatAsState(targetValue = targetIntensity, label = "contactIntensity")
+ 
+     Canvas(modifier = modifier.background(background)) {
+-        val center = Offset(size.width / 2f, size.height * 0.31f)
+-        val baseRadius = size.minDimension * 0.13f
+-        val spin = ((elapsedMs % 18_000L) / 18_000f) * (2f * PI.toFloat())
++        val center = Offset(size.width / 2f, size.height * 0.42f)
++        val baseRadius = size.minDimension * 0.15f
++        val spin = ((elapsedMs % 5_400L) / 5_400f) * (2f * PI.toFloat())
+ 
+-        for (ring in 1..6) {
++        if (active) {
++            drawRect(Color.White.copy(alpha = 0.20f * intensity))
+             drawCircle(
+-                color = Color(0xFF8DEBFF).copy(alpha = intensity * (0.18f / ring)),
+-                radius = baseRadius * ring * 0.74f,
++                color = Color(0xFFB9F4FF).copy(alpha = 0.46f * intensity),
++                radius = size.maxDimension * 0.62f,
+                 center = center,
+-                style = Stroke(width = 1.1f + intensity * 2f),
++            )
++        }
++
++        for (ring in 1..12) {
++            drawCircle(
++                color = Color(0xFF8DEBFF).copy(alpha = intensity * (0.44f / ring.coerceAtLeast(1))),
++                radius = baseRadius * ring * 0.47f,
++                center = center,
++                style = Stroke(width = 1.8f + intensity * 5.5f),
+             )
+         }
+ 
+         val path = Path()
+-        for (index in 0 until 8) {
+-            val angle = spin + (2f * PI.toFloat() * index / 8f) + pulse.index * 0.07f
+-            val radius = baseRadius * (1.4f + if (index % 2 == 0) intensity * 0.55f else 0f)
++        for (index in 0 until 16) {
++            val angle = spin + (2f * PI.toFloat() * index / 16f) + pulse.index * 0.13f
++            val radius = baseRadius * (1.2f + if (index % 2 == 0) intensity * 1.05f else intensity * 0.20f)
+             val x = center.x + cos(angle.toDouble()).toFloat() * radius
+             val y = center.y + sin(angle.toDouble()).toFloat() * radius
+             if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+@@ -921,21 +961,30 @@
+         path.close()
+         drawPath(
+             path = path,
+-            color = Color.White.copy(alpha = intensity * 0.24f),
+-            style = Stroke(width = 2f + intensity * 2f),
++            color = Color.White.copy(alpha = intensity * 0.72f),
++            style = Stroke(width = 3f + intensity * 6f),
+         )
+ 
+-        for (ray in 0 until 12) {
+-            val angle = -spin * 0.62f + (2f * PI.toFloat() * ray / 12f)
+-            val inner = baseRadius * 0.48f
+-            val outer = baseRadius * (1.2f + intensity * 1.4f)
++        for (ray in 0 until 32) {
++            val angle = -spin * 1.35f + (2f * PI.toFloat() * ray / 32f)
++            val inner = baseRadius * 0.22f
++            val outer = baseRadius * (1.35f + intensity * 3.2f)
+             val c = cos(angle.toDouble()).toFloat()
+             val s = sin(angle.toDouble()).toFloat()
+             drawLine(
+-                color = Color(0xFFD6B7FF).copy(alpha = intensity * 0.14f),
++                color = Color(0xFFD6B7FF).copy(alpha = intensity * 0.34f),
+                 start = Offset(center.x + c * inner, center.y + s * inner),
+                 end = Offset(center.x + c * outer, center.y + s * outer),
+-                strokeWidth = 1.4f,
++                strokeWidth = 2.2f + intensity * 3.2f,
++            )
++        }
++
++        if (active) {
++            val sweepY = (elapsedMs % 700L).toFloat() / 700f * size.height
++            drawRect(
++                color = Color.White.copy(alpha = 0.34f * intensity),
++                topLeft = Offset(0f, sweepY),
++                size = androidx.compose.ui.geometry.Size(size.width, 8f + 28f * intensity),
+             )
+         }
+     }
+--- qpsi_project/app/src/main/AndroidManifest.xml
++++ qpsi_project/app/src/main/AndroidManifest.xml
+@@ -1,4 +1,5 @@
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
++    <uses-permission android:name="android.permission.VIBRATE" />
+     <application
+         android:allowBackup="true"
+         android:dataExtractionRules="@xml/data_extraction_rules"
+--- qpsi_project/app/build.gradle.kts
++++ qpsi_project/app/build.gradle.kts
+@@ -12,8 +12,8 @@
+         applicationId = "com.aether.qpsicontact"
+         minSdk = 26
+         targetSdk = 35
+-        versionCode = 2
+-        versionName = "1.0.1-fullscreen"
++        versionCode = 3
++        versionName = "1.1.0-apex"
+     }
+ 
+     compileOptions {

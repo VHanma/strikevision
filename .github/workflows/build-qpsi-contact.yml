@@ -1,0 +1,107 @@
+name: Build Q Psi Contact APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'qpsi-contact/**'
+      - '.github/workflows/build-qpsi-contact.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-qpsi-contact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Reconstruct source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat qpsi-contact/source/fixed-*.b64 > QPsiContact_Source.zip.b64
+          base64 --decode QPsiContact_Source.zip.b64 > QPsiContact_Source.zip
+          echo "97fef1c33377289dfce3284b488aaddafefaab7a67c184d7d3565f4aead1dd99  QPsiContact_Source.zip" | sha256sum -c -
+          rm -rf qpsi-contact/build
+          mkdir -p qpsi-contact/build
+          unzip -q QPsiContact_Source.zip -d qpsi-contact/build
+
+      - name: Apply immersive playback patch
+        shell: bash
+        run: |
+          cd qpsi-contact/build
+          python ../apply_fullscreen_patch.py
+
+      - name: Apply Apex power patch
+        shell: bash
+        run: |
+          cd qpsi-contact/build
+          patch -p0 --forward --reject-file=- < ../apex_power.patch || true
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("qpsi_project/app/src/main/java/com/aether/qpsicontact/MainActivity.kt")
+          text = path.read_text()
+
+          if "import android.content.Context\n" not in text:
+              text = text.replace(
+                  "package com.aether.qpsicontact\n\n",
+                  "package com.aether.qpsicontact\n\nimport android.content.Context\n",
+                  1,
+              )
+          if "import android.os.Build\n" not in text:
+              anchor = "import android.content.Context\n"
+              text = text.replace(anchor, anchor + "import android.os.Build\n", 1)
+          if "import android.os.VibrationEffect\n" not in text:
+              text = text.replace(
+                  "import android.os.SystemClock\n",
+                  "import android.os.SystemClock\nimport android.os.VibrationEffect\nimport android.os.Vibrator\n",
+                  1,
+              )
+
+          path.write_text(text)
+          for reject in Path(".").rglob("*.rej"):
+              reject.unlink()
+          PY
+
+      - name: Build installable APK
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle -p qpsi-contact/build/qpsi_project --no-daemon clean assembleDebug --stacktrace 2>&1 | tee qpsi-contact-build.log
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p qpsi-contact-output
+          cp qpsi-contact/build/qpsi_project/app/build/outputs/apk/debug/app-debug.apk qpsi-contact-output/Q-Psi-Contact-Apex.apk
+          sha256sum qpsi-contact-output/Q-Psi-Contact-Apex.apk > qpsi-contact-output/Q-Psi-Contact-Apex.apk.sha256
+          cp qpsi-contact-build.log qpsi-contact-output/build.log
+
+      - name: Upload installable APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Q-Psi-Contact-apex-apk
+          path: qpsi-contact-output/*
+          if-no-files-found: warn
