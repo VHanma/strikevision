@@ -1,4 +1,4 @@
-name: Build StrikeVision APK
+name: Build StrikeVision Omega APK
 
 on:
   workflow_dispatch:
@@ -36,7 +36,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build StrikeVision
+      - name: Build StrikeVision Omega
         shell: bash
         run: |
           set -euo pipefail
@@ -44,16 +44,16 @@ jobs:
           gradle --no-daemon clean assembleDebug --stacktrace
           cd ..
           mkdir -p native-apk/releases
-          cp native-apk/app/build/outputs/apk/debug/app-debug.apk native-apk/releases/StrikeVision-v2-debug.apk
-          sha256sum native-apk/releases/StrikeVision-v2-debug.apk > native-apk/releases/StrikeVision-v2-debug.apk.sha256
+          cp native-apk/app/build/outputs/apk/debug/app-debug.apk native-apk/releases/StrikeVision-Omega-v3-debug.apk
+          sha256sum native-apk/releases/StrikeVision-Omega-v3-debug.apk > native-apk/releases/StrikeVision-Omega-v3-debug.apk.sha256
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: StrikeVision-v2-debug
+          name: StrikeVision-Omega-v3-debug
           path: |
-            native-apk/releases/StrikeVision-v2-debug.apk
-            native-apk/releases/StrikeVision-v2-debug.apk.sha256
+            native-apk/releases/StrikeVision-Omega-v3-debug.apk
+            native-apk/releases/StrikeVision-Omega-v3-debug.apk.sha256
           if-no-files-found: error
 
       - name: Publish APK to repository
@@ -63,6 +63,6 @@ jobs:
           git config user.email "actions@github.com"
           git add native-apk/releases
           if ! git diff --cached --quiet; then
-            git commit -m "Publish StrikeVision v2 debug APK [skip ci]"
+            git commit -m "Publish StrikeVision Omega v3 debug APK [skip ci]"
             git push
           fi
