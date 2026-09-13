@@ -27,8 +27,6 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -62,7 +60,7 @@ public class OmegaReplayActivity extends Activity {
 
     private void openSession(String sessionPath){
         try{
-            JSONObject root=new JSONObject(Files.readString(new File(sessionPath).toPath(), StandardCharsets.UTF_8));
+            JSONObject root=new JSONObject(OmegaIo.read(new File(sessionPath)));
             String videoPath=root.optString("videoPath","");sourceW=root.optInt("frameWidth",360);sourceH=root.optInt("frameHeight",640);
             JSONArray jf=root.getJSONArray("frames");for(int i=0;i<jf.length();i++){JSONObject o=jf.getJSONObject(i);FrameLite f=new FrameLite();f.t=o.optLong("t");f.c=o.optDouble("c");JSONArray p=o.optJSONArray("p");if(p!=null)for(int k=0;k+2<p.length();k+=3)f.p.put(p.getInt(k),new PointF((float)p.getDouble(k+1),(float)p.getDouble(k+2)));frames.add(f);}
             JSONArray js=root.optJSONArray("strikes");if(js!=null)for(int i=0;i<js.length();i++){JSONObject o=js.getJSONObject(i);StrikeLite s=new StrikeLite();s.name=o.optString("technique","Strike");s.side=o.optString("side","");s.peak=o.optLong("peakMs");s.mph=o.optDouble("peakMph");s.chain=o.optDouble("chainScore");s.conf=o.optDouble("confidence");s.recoil=o.optDouble("recoilMph");s.eff=o.optDouble("pathEfficiency");JSONArray e=o.optJSONArray("evidence");if(e!=null)for(int k=0;k<e.length();k++)s.evidence.add(e.optString(k));strikes.add(s);}
