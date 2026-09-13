@@ -3,7 +3,7 @@ name: Build StrikeVision Omega APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, omega-v4-complete ]
     paths:
       - 'native-apk/**'
       - '!native-apk/releases/**'
@@ -36,7 +36,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build StrikeVision Omega
+      - name: Build StrikeVision Omega 4
         shell: bash
         run: |
           set -euo pipefail
@@ -44,19 +44,20 @@ jobs:
           gradle --no-daemon clean assembleDebug --stacktrace
           cd ..
           mkdir -p native-apk/releases
-          cp native-apk/app/build/outputs/apk/debug/app-debug.apk native-apk/releases/StrikeVision-Omega-v3-debug.apk
-          sha256sum native-apk/releases/StrikeVision-Omega-v3-debug.apk > native-apk/releases/StrikeVision-Omega-v3-debug.apk.sha256
+          cp native-apk/app/build/outputs/apk/debug/app-debug.apk native-apk/releases/StrikeVision-Omega-v4-debug.apk
+          sha256sum native-apk/releases/StrikeVision-Omega-v4-debug.apk > native-apk/releases/StrikeVision-Omega-v4-debug.apk.sha256
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: StrikeVision-Omega-v3-debug
+          name: StrikeVision-Omega-v4-debug
           path: |
-            native-apk/releases/StrikeVision-Omega-v3-debug.apk
-            native-apk/releases/StrikeVision-Omega-v3-debug.apk.sha256
+            native-apk/releases/StrikeVision-Omega-v4-debug.apk
+            native-apk/releases/StrikeVision-Omega-v4-debug.apk.sha256
           if-no-files-found: error
 
       - name: Publish APK to repository
+        if: github.ref == 'refs/heads/main'
         shell: bash
         run: |
           set -euo pipefail
@@ -64,15 +65,11 @@ jobs:
           git config user.email "actions@github.com"
           git add native-apk/releases
           if ! git diff --cached --quiet; then
-            git commit -m "Publish StrikeVision Omega v3 debug APK [skip ci]"
-            # Another build workflow may publish to main at the same time. Rebase our
-            # generated-file commit onto the latest main before pushing.
+            git commit -m "Publish StrikeVision Omega v4 debug APK [skip ci]"
             for attempt in 1 2 3; do
               git fetch origin main
               git rebase origin/main
-              if git push origin HEAD:main; then
-                exit 0
-              fi
+              if git push origin HEAD:main; then exit 0; fi
               sleep $((attempt * 2))
             done
             echo "Could not publish generated APK after 3 rebased attempts" >&2
