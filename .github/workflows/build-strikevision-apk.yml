@@ -29,12 +29,12 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0" "platform-tools"
 
-      - name: Setup Gradle 8.9
+      - name: Setup Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.11.1'
 
       - name: Build StrikeVision Omega 4
         shell: bash
