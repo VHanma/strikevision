@@ -3,7 +3,7 @@ name: Build StrikeVision Omega APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, omega-v4-complete ]
+    branches: [ main, omega-v4-complete, omega-v4-ui-polish ]
     paths:
       - 'native-apk/**'
       - '!native-apk/releases/**'
