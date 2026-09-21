@@ -3,7 +3,7 @@ name: Build StrikeVision Omega APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, omega-v4-complete ]
+    branches: [ main, omega-v4-complete, omega-v4-ui-polish ]
     paths:
       - 'native-apk/**'
       - '!native-apk/releases/**'
@@ -26,7 +26,7 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;35.0.0" "platform-tools"

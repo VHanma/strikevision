@@ -75,8 +75,16 @@ public class OmegaActivity extends ComponentActivity {
     private FrameLayout root;
     private PreviewView previewView;
     private LinearLayout hud;
+    private ScrollView hudScroll;
+    private LinearLayout setupPanel, runControls;
+    private Button stopButton, editSetupButton;
     private TextView statusText, liveText, timerText, latestText, calibrationText, fpsText, capabilityText, modeText;
     private EditText weightInput, heightInput, armInput, shoulderInput;
+
+    private final Map<LabMode, Button> modeButtons = new HashMap<>();
+    private final Map<Stance, Button> stanceButtons = new HashMap<>();
+    private final Map<Integer, Button> timeButtons = new HashMap<>();
+    private final Map<Integer, Button> sensitivityButtons = new HashMap<>();
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private ExecutorService cameraExecutor;
@@ -85,7 +93,9 @@ public class OmegaActivity extends ComponentActivity {
 
     private boolean processing = false;
     private boolean activeTest = false;
+    private boolean countdownRunning = false;
     private boolean calibrating = false;
+    private int runGeneration = 0;
     private int selectedSeconds = 10;
     private int sensitivity = 2;
     private LabMode labMode = LabMode.VELOCITY;
@@ -160,39 +170,68 @@ public class OmegaActivity extends ComponentActivity {
 
     private void buildScreen() {
         root = new FrameLayout(this);
+        root.setBackgroundColor(Color.rgb(3, 6, 10));
         previewView = new PreviewView(this);
         previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
         root.addView(previewView, new FrameLayout.LayoutParams(-1, -1));
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(Color.argb(74, 0, 0, 0));
+        View cameraScrim = new View(this);
+        GradientDrawable scrim = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.argb(225, 2, 6, 11), Color.argb(86, 2, 6, 11), Color.argb(165, 2, 6, 11)});
+        cameraScrim.setBackground(scrim);
+        root.addView(cameraScrim, new FrameLayout.LayoutParams(-1, -1));
+
+        hudScroll = new ScrollView(this);
+        hudScroll.setFillViewport(true);
+        hudScroll.setClipToPadding(false);
+        hudScroll.setBackgroundColor(Color.TRANSPARENT);
         hud = new LinearLayout(this);
         hud.setOrientation(LinearLayout.VERTICAL);
-        hud.setPadding(20, 34, 20, 28);
-        scroll.addView(hud, new ScrollView.LayoutParams(-1, -2));
-        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        hud.setPadding(20, 28, 20, 34);
+        hudScroll.addView(hud, new ScrollView.LayoutParams(-1, -2));
+        root.addView(hudScroll, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
 
-        center("STRIKEVISION Ω", 29, Color.WHITE);
-        center("Local Combat Telemetry Lab", 14, Color.rgb(185, 255, 45));
-        statusText = center("Starting front camera...", 13, Color.rgb(185, 255, 45));
-        capabilityText = center("Camera: probing capabilities...", 11, Color.LTGRAY);
-        fpsText = center("Pose: 0 fps", 11, Color.LTGRAY);
-        modeText = center(modeLabel(), 13, Color.rgb(110, 190, 255));
-        timerText = center("Ready", 20, Color.WHITE);
-        liveText = center("Live weapon speed: 0.0 mph", 18, Color.rgb(80, 165, 255));
-        calibrationText = center(calibrationLabel(), 12, Color.LTGRAY);
-        latestText = cardText("Latest measured strike", "No strike yet");
+        TextView title = center("STRIKEVISION Ω4", 30, Color.WHITE);
+        title.setLetterSpacing(0.08f);
+        center("COMBAT TELEMETRY // LIVE", 12, neonLime());
+        View neonRule = new View(this);
+        neonRule.setBackground(gradientButtonBg());
+        LinearLayout.LayoutParams ruleLp = new LinearLayout.LayoutParams(-1, 5);
+        ruleLp.setMargins(48, 10, 48, 16);
+        hud.addView(neonRule, ruleLp);
 
-        hud.addView(section("Fighter calibration profile"));
+        LinearLayout telemetryPanel = panel(Color.argb(218, 8, 14, 22), neonBlue());
+        hud.addView(telemetryPanel, cardLayout(0, 0, 0, 10));
+        statusText = centeredIn(telemetryPanel, "Starting front camera...", 13, neonLime(), Typeface.BOLD);
+        capabilityText = centeredIn(telemetryPanel, "Camera: probing capabilities...", 10, Color.LTGRAY, Typeface.NORMAL);
+        fpsText = centeredIn(telemetryPanel, "Pose: 0 fps", 10, Color.LTGRAY, Typeface.NORMAL);
+        modeText = centeredIn(telemetryPanel, modeLabel(), 13, Color.rgb(105, 205, 255), Typeface.BOLD);
+        timerText = centeredIn(telemetryPanel, "READY", 35, Color.WHITE, Typeface.BOLD);
+        timerText.setLetterSpacing(0.10f);
+        liveText = centeredIn(telemetryPanel, "LIVE SPEED  0.0 MPH", 20, neonBlue(), Typeface.BOLD);
+        calibrationText = centeredIn(telemetryPanel, calibrationLabel(), 11, Color.LTGRAY, Typeface.NORMAL);
+        latestText = cardText(telemetryPanel, "LATEST STRIKE", "No strike yet");
+
+        setupPanel = panel(Color.argb(230, 9, 14, 22), Color.rgb(60, 76, 96));
+        setupPanel.setPadding(18, 14, 18, 18);
+        hud.addView(setupPanel, cardLayout(0, 0, 0, 10));
+        TextView setupTitle = text("MISSION SETUP", 16, Color.WHITE, Typeface.BOLD);
+        setupTitle.setLetterSpacing(0.08f);
+        setupPanel.addView(setupTitle);
+        TextView setupHint = text("Lock your profile, mode and detection gate. Setup clears when the countdown starts.", 11, Color.LTGRAY, Typeface.NORMAL);
+        setupHint.setPadding(0, 2, 0, 5);
+        setupPanel.addView(setupHint);
+
+        setupPanel.addView(section("Fighter calibration profile"));
         LinearLayout p1 = new LinearLayout(this);
         p1.setOrientation(LinearLayout.HORIZONTAL);
         weightInput = field("Weight lb", fmt(bodyWeightLb));
         heightInput = field("Height in", fmt(heightIn));
         p1.addView(weightInput);
         p1.addView(heightInput);
-        hud.addView(p1);
+        setupPanel.addView(p1);
 
         LinearLayout p2 = new LinearLayout(this);
         p2.setOrientation(LinearLayout.HORIZONTAL);
@@ -200,7 +239,7 @@ public class OmegaActivity extends ComponentActivity {
         shoulderInput = field("Shoulder width in", fmt(shoulderWidthIn));
         p2.addView(armInput);
         p2.addView(shoulderInput);
-        hud.addView(p2);
+        setupPanel.addView(p2);
 
         LinearLayout calRow = new LinearLayout(this);
         calRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -210,33 +249,35 @@ public class OmegaActivity extends ComponentActivity {
         resetCal.setOnClickListener(v -> resetCalibration());
         calRow.addView(calibrate);
         calRow.addView(resetCal);
-        hud.addView(calRow);
+        setupPanel.addView(calRow);
 
-        hud.addView(section("Ω Lab mode"));
+        setupPanel.addView(section("Ω Lab mode"));
         LinearLayout modeRow1 = new LinearLayout(this);
         modeRow1.setOrientation(LinearLayout.HORIZONTAL);
         modeRow1.addView(modeButton("Quick", LabMode.QUICK));
         modeRow1.addView(modeButton("Velocity", LabMode.VELOCITY));
         modeRow1.addView(modeButton("Power", LabMode.POWER));
-        hud.addView(modeRow1);
+        setupPanel.addView(modeRow1);
         LinearLayout modeRow2 = new LinearLayout(this);
         modeRow2.setOrientation(LinearLayout.HORIZONTAL);
         modeRow2.addView(modeButton("Combo", LabMode.COMBO));
         modeRow2.addView(modeButton("Endurance", LabMode.ENDURANCE));
-        hud.addView(modeRow2);
+        setupPanel.addView(modeRow2);
 
-        hud.addView(section("Stance"));
+        setupPanel.addView(section("Stance"));
         LinearLayout stanceRow = new LinearLayout(this);
         stanceRow.setOrientation(LinearLayout.HORIZONTAL);
         Button orthodox = smallButton("Orthodox");
         Button southpaw = smallButton("Southpaw");
         orthodox.setOnClickListener(v -> setStance(Stance.ORTHODOX));
         southpaw.setOnClickListener(v -> setStance(Stance.SOUTHPAW));
+        stanceButtons.put(Stance.ORTHODOX, orthodox);
+        stanceButtons.put(Stance.SOUTHPAW, southpaw);
         stanceRow.addView(orthodox);
         stanceRow.addView(southpaw);
-        hud.addView(stanceRow);
+        setupPanel.addView(stanceRow);
 
-        hud.addView(section("Test length"));
+        setupPanel.addView(section("Test length"));
         LinearLayout timeRow = new LinearLayout(this);
         timeRow.setOrientation(LinearLayout.HORIZONTAL);
         for (int seconds : new int[]{5, 10, 15, 30}) {
@@ -244,12 +285,14 @@ public class OmegaActivity extends ComponentActivity {
             b.setOnClickListener(v -> {
                 selectedSeconds = seconds;
                 statusText.setText(seconds + " second window selected");
+                updateSelectionStyles();
             });
+            timeButtons.put(seconds, b);
             timeRow.addView(b);
         }
-        hud.addView(timeRow);
+        setupPanel.addView(timeRow);
 
-        hud.addView(section("Detection gate"));
+        setupPanel.addView(section("Detection gate"));
         LinearLayout sensRow = new LinearLayout(this);
         sensRow.setOrientation(LinearLayout.HORIZONTAL);
         String[] names = {"Strict", "Balanced", "Sensitive"};
@@ -259,16 +302,18 @@ public class OmegaActivity extends ComponentActivity {
             b.setOnClickListener(v -> {
                 sensitivity = s;
                 statusText.setText(names[s - 1] + " strike gate");
+                updateSelectionStyles();
             });
+            sensitivityButtons.put(s, b);
             sensRow.addView(b);
         }
-        hud.addView(sensRow);
+        setupPanel.addView(sensRow);
 
         View spacer = new View(this);
-        hud.addView(spacer, new LinearLayout.LayoutParams(1, 36));
-        Button start = largeButton("START 5-COUNT");
+        setupPanel.addView(spacer, new LinearLayout.LayoutParams(1, 24));
+        Button start = largeButton("BEGIN // 5-COUNT");
         start.setOnClickListener(v -> startCountdown());
-        hud.addView(start);
+        setupPanel.addView(start);
 
         LinearLayout bottom1 = new LinearLayout(this);
         bottom1.setOrientation(LinearLayout.HORIZONTAL);
@@ -278,7 +323,7 @@ public class OmegaActivity extends ComponentActivity {
         pbs.setOnClickListener(v -> showPersonalBests());
         bottom1.addView(history);
         bottom1.addView(pbs);
-        hud.addView(bottom1);
+        setupPanel.addView(bottom1);
 
         Button profile = largeButton("Save fighter profile");
         profile.setTextSize(13);
@@ -288,9 +333,26 @@ public class OmegaActivity extends ComponentActivity {
                 statusText.setText("Fighter profile saved locally");
             }
         });
-        hud.addView(profile);
+        setupPanel.addView(profile);
 
-        center("Measured: camera trajectory + timing. Derived: acceleration, momentum and kinetic energy potential. Estimated: effective striking mass and force window. Side view gives the strongest speed geometry.", 10, Color.LTGRAY);
+        TextView disclosure = text("MEASURED  camera path + time\nDERIVED  acceleration + momentum + energy\nMODELED  effective mass + force window", 10, Color.LTGRAY, Typeface.NORMAL);
+        disclosure.setPadding(4, 12, 4, 3);
+        setupPanel.addView(disclosure);
+
+        runControls = new LinearLayout(this);
+        runControls.setOrientation(LinearLayout.HORIZONTAL);
+        runControls.setGravity(Gravity.CENTER);
+        stopButton = smallButton("END TEST");
+        stopButton.setBackground(roundBg(Color.rgb(190, 50, 62), Color.rgb(255, 105, 118), 22f));
+        stopButton.setOnClickListener(v -> stopCurrentRun());
+        editSetupButton = smallButton("EDIT SETUP");
+        editSetupButton.setOnClickListener(v -> showSetupPanel());
+        runControls.addView(stopButton);
+        runControls.addView(editSetupButton);
+        runControls.setVisibility(View.GONE);
+        hud.addView(runControls, cardLayout(0, 0, 0, 8));
+
+        updateSelectionStyles();
 
         queryCameraCapabilities();
         bindCamera();
@@ -299,10 +361,12 @@ public class OmegaActivity extends ComponentActivity {
 
     private Button modeButton(String label, LabMode mode) {
         Button b = smallButton(label);
+        modeButtons.put(mode, b);
         b.setOnClickListener(v -> {
             labMode = mode;
             modeText.setText(modeLabel());
             statusText.setText(label + " mode armed");
+            updateSelectionStyles();
         });
         return b;
     }
@@ -311,6 +375,7 @@ public class OmegaActivity extends ComponentActivity {
         stance = s;
         statusText.setText(s == Stance.ORTHODOX ? "Orthodox stance" : "Southpaw stance");
         saveProfile();
+        updateSelectionStyles();
     }
 
     private String modeLabel() {
@@ -536,40 +601,59 @@ public class OmegaActivity extends ComponentActivity {
     }
 
     private void startCountdown() {
-        if (activeTest) return;
+        if (activeTest || countdownRunning) return;
         if (!readProfileInputs()) return;
         saveProfile();
         currentResults.clear();
         resetMotionState();
+        countdownRunning = true;
+        final int generation = ++runGeneration;
+        hideSetupForRun();
         timerText.setText("5");
+        pulseTimer();
         for (int i = 4; i >= 1; i--) {
             final int n = i;
-            ui.postDelayed(() -> timerText.setText(String.valueOf(n)), (5L - i) * 1000L);
+            ui.postDelayed(() -> {
+                if (generation != runGeneration || !countdownRunning) return;
+                timerText.setText(String.valueOf(n));
+                pulseTimer();
+            }, (5L - i) * 1000L);
         }
         ui.postDelayed(() -> {
+            if (generation != runGeneration || !countdownRunning) return;
+            countdownRunning = false;
             activeTest = true;
             testStartUptimeMs = SystemClock.uptimeMillis();
             testEndUptimeMs = testStartUptimeMs + selectedSeconds * 1000L;
             timerText.setText("GO");
+            liveText.setTextColor(neonLime());
             statusText.setText(labMode == LabMode.POWER ? "Measuring speed + modeled impact mechanics" : "Measuring strike telemetry");
         }, 5000L);
-        ui.postDelayed(this::finishTest, 5000L + selectedSeconds * 1000L + 300L);
+        ui.postDelayed(() -> {
+            if (generation == runGeneration) finishTest();
+        }, 5000L + selectedSeconds * 1000L + 300L);
     }
 
     private void finishTest() {
         if (!activeTest) return;
         activeTest = false;
+        countdownRunning = false;
+        stopButton.setVisibility(View.GONE);
+        editSetupButton.setVisibility(View.VISIBLE);
+        editSetupButton.setText("EDIT SETUP");
+        liveText.setTextColor(neonBlue());
         for (StrikeTracker tr : strikeTracks.values()) {
             StrikeResult tail = tr.forceFinish(System.nanoTime());
             if (tail != null) onStrike(tail);
         }
-        timerText.setText("Complete");
+        timerText.setText("COMPLETE");
         if (currentResults.isEmpty()) {
             statusText.setText("No clean strike burst detected.");
             new AlertDialog.Builder(this)
                     .setTitle("No accepted strikes")
                     .setMessage("Keep the phone fixed, stay side-on, keep the striking limb visible, and try Sensitive if the gate is rejecting real strikes.")
-                    .setPositiveButton("OK", null)
+                    .setPositiveButton("Run again", (d, w) -> startCountdown())
+                    .setNegativeButton("Edit setup", (d, w) -> showSetupPanel())
                     .show();
             return;
         }
@@ -578,9 +662,60 @@ public class OmegaActivity extends ComponentActivity {
         new AlertDialog.Builder(this)
                 .setTitle("StrikeVision Ω result")
                 .setMessage(summaryMessage(s))
-                .setPositiveButton("Run again", (d, w) -> timerText.setText("Ready"))
+                .setPositiveButton("Run again", (d, w) -> startCountdown())
                 .setNegativeButton("History", (d, w) -> showHistory())
+                .setNeutralButton("Edit setup", (d, w) -> showSetupPanel())
                 .show();
+    }
+
+    private void hideSetupForRun() {
+        editSetupButton.setVisibility(View.GONE);
+        stopButton.setVisibility(View.VISIBLE);
+        runControls.setVisibility(View.VISIBLE);
+        setupPanel.animate()
+                .alpha(0f)
+                .translationY(28f)
+                .setDuration(180L)
+                .withEndAction(() -> {
+                    setupPanel.setVisibility(View.GONE);
+                    setupPanel.setAlpha(1f);
+                    setupPanel.setTranslationY(0f);
+                    hudScroll.smoothScrollTo(0, 0);
+                })
+                .start();
+        statusText.setText("Countdown armed. Setup locked.");
+    }
+
+    private void showSetupPanel() {
+        if (activeTest || countdownRunning) return;
+        setupPanel.animate().withEndAction(null).cancel();
+        runControls.setVisibility(View.GONE);
+        setupPanel.setAlpha(0f);
+        setupPanel.setTranslationY(24f);
+        setupPanel.setVisibility(View.VISIBLE);
+        setupPanel.animate().alpha(1f).translationY(0f).setDuration(220L).start();
+        timerText.setText("READY");
+        statusText.setText("Setup unlocked");
+        hudScroll.post(() -> hudScroll.smoothScrollTo(0, setupPanel.getTop()));
+    }
+
+    private void stopCurrentRun() {
+        if (!activeTest && !countdownRunning) return;
+        runGeneration++;
+        activeTest = false;
+        countdownRunning = false;
+        resetMotionState();
+        liveText.setTextColor(neonBlue());
+        showSetupPanel();
+        timerText.setText("STOPPED");
+        statusText.setText("Test stopped. Setup restored.");
+    }
+
+    private void pulseTimer() {
+        timerText.setScaleX(0.82f);
+        timerText.setScaleY(0.82f);
+        timerText.setAlpha(0.55f);
+        timerText.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(280L).start();
     }
 
     private String summaryMessage(SessionSummary s) {
@@ -1151,24 +1286,32 @@ public class OmegaActivity extends ComponentActivity {
         return tv;
     }
 
+    private TextView centeredIn(LinearLayout parent, String value, int size, int color, int style) {
+        TextView tv = text(value, size, color, style);
+        tv.setGravity(Gravity.CENTER);
+        parent.addView(tv);
+        return tv;
+    }
+
     private TextView section(String text) {
         TextView tv = text(text, 14, Color.WHITE, Typeface.BOLD);
         tv.setPadding(0, 18, 0, 7);
         return tv;
     }
 
-    private TextView cardText(String title, String body) {
+    private TextView cardText(LinearLayout parent, String title, String body) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(18, 15, 18, 15);
-        card.setBackground(roundBg(Color.argb(210, 17, 17, 17)));
-        TextView h = text(title, 15, Color.WHITE, Typeface.BOLD);
+        card.setBackground(roundBg(Color.argb(218, 13, 22, 32), Color.rgb(48, 98, 125), 20f));
+        TextView h = text(title, 12, neonLime(), Typeface.BOLD);
+        h.setLetterSpacing(0.08f);
         TextView b = text(body, 14, Color.rgb(230, 230, 230), Typeface.NORMAL);
         card.addView(h);
         card.addView(b);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, 10, 0, 8);
-        hud.addView(card, lp);
+        parent.addView(card, lp);
         return b;
     }
 
@@ -1184,7 +1327,7 @@ public class OmegaActivity extends ComponentActivity {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, 82, 1);
         lp.setMargins(4, 2, 4, 2);
         e.setLayoutParams(lp);
-        e.setBackground(roundBg(Color.argb(195, 30, 30, 30)));
+        e.setBackground(roundBg(Color.argb(225, 16, 24, 34), Color.rgb(55, 73, 94), 20f));
         e.setPadding(12, 0, 12, 0);
         return e;
     }
@@ -1206,7 +1349,7 @@ public class OmegaActivity extends ComponentActivity {
         b.setTextColor(Color.WHITE);
         b.setTextSize(17);
         b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        b.setBackground(roundBg(Color.rgb(42, 115, 242)));
+        b.setBackground(gradientButtonBg());
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 106);
         lp.setMargins(0, 7, 0, 7);
         b.setLayoutParams(lp);
@@ -1222,11 +1365,64 @@ public class OmegaActivity extends ComponentActivity {
         return b;
     }
 
+    private void updateSelectionStyles() {
+        for (Map.Entry<LabMode, Button> entry : modeButtons.entrySet()) {
+            styleChoice(entry.getValue(), entry.getKey() == labMode);
+        }
+        for (Map.Entry<Stance, Button> entry : stanceButtons.entrySet()) {
+            styleChoice(entry.getValue(), entry.getKey() == stance);
+        }
+        for (Map.Entry<Integer, Button> entry : timeButtons.entrySet()) {
+            styleChoice(entry.getValue(), entry.getKey() == selectedSeconds);
+        }
+        for (Map.Entry<Integer, Button> entry : sensitivityButtons.entrySet()) {
+            styleChoice(entry.getValue(), entry.getKey() == sensitivity);
+        }
+    }
+
+    private void styleChoice(Button button, boolean selected) {
+        button.setTextColor(selected ? Color.rgb(4, 10, 14) : Color.WHITE);
+        button.setBackground(selected
+                ? roundBg(neonLime(), Color.WHITE, 22f)
+                : roundBg(Color.rgb(18, 31, 44), Color.rgb(58, 91, 116), 22f));
+        button.setAlpha(selected ? 1f : 0.88f);
+    }
+
+    private LinearLayout panel(int color, int stroke) {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(18, 15, 18, 15);
+        panel.setBackground(roundBg(color, stroke, 26f));
+        return panel;
+    }
+
+    private LinearLayout.LayoutParams cardLayout(int left, int top, int right, int bottom) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(left, top, right, bottom);
+        return lp;
+    }
+
+    private int neonBlue() { return Color.rgb(72, 194, 255); }
+    private int neonLime() { return Color.rgb(194, 255, 48); }
+
+    private GradientDrawable gradientButtonBg() {
+        GradientDrawable g = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.rgb(35, 102, 238), Color.rgb(22, 166, 235)});
+        g.setCornerRadius(22f);
+        g.setStroke(1, Color.rgb(118, 216, 255));
+        return g;
+    }
+
     private GradientDrawable roundBg(int color) {
+        return roundBg(color, Color.rgb(66, 66, 66), 22f);
+    }
+
+    private GradientDrawable roundBg(int color, int stroke, float radius) {
         GradientDrawable g = new GradientDrawable();
         g.setColor(color);
-        g.setCornerRadius(22f);
-        g.setStroke(1, Color.rgb(66, 66, 66));
+        g.setCornerRadius(radius);
+        g.setStroke(1, stroke);
         return g;
     }
 }
