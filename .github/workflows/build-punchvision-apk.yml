@@ -1,0 +1,143 @@
+name: Build PunchVision Apex Fusion APK
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "build_payload/**"
+      - "bridge_patch/**"
+      - "apex_payload/**"
+      - ".github/workflows/build-punchvision-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout project payload
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Reconstruct exact Kotlin project
+        run: |
+          cat build_payload/PunchVisionAI-source.zip.b64.part* | base64 --decode > PunchVisionAI-source.zip
+          echo "5c488ca4379da716a016b3384f13fb327af4d5168b33184ae54691a32617eed7  PunchVisionAI-source.zip" | sha256sum --check
+          unzip -q PunchVisionAI-source.zip
+          test -f PunchVisionAI/settings.gradle.kts
+
+      - name: Lock Android 36 compatible libraries
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("PunchVisionAI/app/build.gradle.kts")
+          text = path.read_text()
+          replacements = {
+              'androidx.compose:compose-bom:2026.06.00': 'androidx.compose:compose-bom:2025.05.01',
+              'androidx.core:core-ktx:1.19.0': 'androidx.core:core-ktx:1.16.0',
+              'androidx.activity:activity-compose:1.12.4': 'androidx.activity:activity-compose:1.10.1',
+              'androidx.lifecycle:lifecycle-runtime-ktx:2.11.0': 'androidx.lifecycle:lifecycle-runtime-ktx:2.9.1',
+              'androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0': 'androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"Missing expected dependency: {old}")
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
+
+      - name: Apply FightCamp Console Bridge foundation
+        run: |
+          mkdir -p PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge
+          cp bridge_patch/BridgeModels.kt PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge/BridgeModels.kt
+          cp bridge_patch/FightCampBridgeScanner.kt PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge/FightCampBridgeScanner.kt
+          cp bridge_patch/BridgeScreen.kt PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/ui/BridgeScreen.kt
+          cp bridge_patch/PunchVisionApp.kt PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/ui/PunchVisionApp.kt
+          cp bridge_patch/AndroidManifest.xml PunchVisionAI/app/src/main/AndroidManifest.xml
+          python3 - <<'PY'
+          from pathlib import Path
+          gradle = Path("PunchVisionAI/app/build.gradle.kts")
+          text = gradle.read_text()
+          text = text.replace('versionCode = 1', 'versionCode = 2')
+          text = text.replace('versionName = "1.0.0"', 'versionName = "1.1.0"')
+          gradle.write_text(text)
+
+          scanner = Path("PunchVisionAI/app/src/main/java/com/vaanhanma/punchvision/bridge/FightCampBridgeScanner.kt")
+          text = scanner.read_text()
+          text = text.replace('val name = record?.deviceName', 'val name: String = record?.deviceName')
+          text = text.replace(
+              '?: if (hasBleConnectPermission()) runCatching { result.device.name }.getOrNull() else null',
+              '?: (if (hasBleConnectPermission()) runCatching { result.device.name }.getOrNull() else null)'
+          )
+          scanner.write_text(text)
+          PY
+
+      - name: Apply PunchVision Apex Fusion v2 patch
+        run: |
+          cat apex_payload/PunchVisionAI-ApexFusion-patch.zip.b64.part* | base64 --decode > PunchVisionAI-ApexFusion-patch.zip
+          echo "f639390dfa2f9728f3aa512a5e4ccb5b73480bc6a434591d8dfa3a305809186d  PunchVisionAI-ApexFusion-patch.zip" | sha256sum --check
+          unzip -qo PunchVisionAI-ApexFusion-patch.zip -d PunchVisionAI
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("PunchVisionAI/app/build.gradle.kts")
+          text = path.read_text()
+          text = text.replace('versionCode = 2', 'versionCode = 3')
+          text = text.replace('versionName = "1.1.0"', 'versionName = "2.0.0"')
+          path.write_text(text)
+          PY
+
+      - name: Run Apex unit tests and build installable APK
+        id: android_build
+        continue-on-error: true
+        working-directory: PunchVisionAI
+        run: |
+          set -o pipefail
+          gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace 2>&1 | tee ../gradle-build.log
+
+      - name: Upload compiler log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PunchVisionAI-Apex-Build-Log
+          path: gradle-build.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Rename APK
+        if: steps.android_build.outcome == 'success'
+        run: cp PunchVisionAI/app/build/outputs/apk/debug/app-debug.apk PunchVisionAI-Apex-Fusion-v2.0.apk
+
+      - name: Upload finished APK
+        if: steps.android_build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PunchVisionAI-Apex-Fusion-APK
+          path: PunchVisionAI-Apex-Fusion-v2.0.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Mark compiler failure
+        if: steps.android_build.outcome == 'failure'
+        run: exit 1
