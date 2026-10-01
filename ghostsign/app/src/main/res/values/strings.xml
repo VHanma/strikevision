@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GhostSign</string>
+    <string name="accessibility_desc">Adds an invisible cryptographic watermark to compatible message fields after you pause typing. GhostSign works offline and does not request internet access.</string>
+</resources>
