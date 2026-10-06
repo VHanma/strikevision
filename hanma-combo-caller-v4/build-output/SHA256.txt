@@ -1,0 +1,2 @@
+5e9c8bb6c9d92ebc73e95f21f43e49db53b06fae5b177ffd4020e2821e28779c  hanma-combo-caller-v4/build-output/HanmaComboCaller-v4.2-COMPLETE.apk
+5ac1c17a9a6701979a84437d4530be729a815ba8cfc00d48e687e004627af432  hanma-combo-caller-v4/build-output/HANMA_COMBO_CALLER_V4.2_COMPLETE_SOURCE.zip
