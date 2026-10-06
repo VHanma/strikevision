@@ -1,0 +1,139 @@
+name: Build HANMA Combo Caller v4.2
+
+on:
+  push:
+    branches:
+      - hanma-combo-caller-v4-build
+    paths-ignore:
+      - 'hanma-combo-caller-v4/build-output/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout build branch
+        uses: actions/checkout@v4
+
+      - name: Reconstruct HANMA source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat hanma-combo-caller-v4/bootstrap.part* > /tmp/hanma-project.b64
+          base64 -d /tmp/hanma-project.b64 > /tmp/hanma-project.tar.gz
+          echo "27f5c084d1fa49ee70de1b1f1f8dd1e1529a502305f3a1545b970d8c93aac69f  /tmp/hanma-project.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/hanma-project.tar.gz -C hanma-combo-caller-v4
+          rm -f hanma-combo-caller-v4/bootstrap.part*
+          test -f hanma-combo-caller-v4/app/src/main/assets/app.js
+          test -f hanma-combo-caller-v4/app/src/main/assets/missing_combat_vault.js
+          test -f hanma-combo-caller-v4/app/src/main/assets/compiled_vault.json
+          test -f hanma-combo-caller-v4/app/src/main/java/com/hanmaclan/combatengine/MainActivity.java
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 35 build tools
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Audit JavaScript and vault
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check hanma-combo-caller-v4/app/src/main/assets/app.js
+          node --check hanma-combo-caller-v4/app/src/main/assets/missing_combat_vault.js
+          node --check hanma-combo-caller-v4/app/src/main/assets/full_vault.js
+          python3 - <<'PY'
+          import json
+          p='hanma-combo-caller-v4/app/src/main/assets/compiled_vault.json'
+          d=json.load(open(p))
+          c=d['metadata']['counts']
+          assert c['callableCues'] == 1189, c
+          assert c['banks'] == 85, c
+          assert c['presets'] == 38, c
+          assert c['vaultModules'] == 49, c
+          assert c['sourceMediaSlots'] == 943, c
+          assert c['wrestleAITutorialSlots'] == 80, c
+          assert c['strengthWorkoutDays'] == 18, c
+          print('Vault audit:', c)
+          PY
+
+      - name: Build debug APK
+        working-directory: hanma-combo-caller-v4
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug --stacktrace
+
+      - name: Package and verify outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="hanma-combo-caller-v4/build-output"
+          mkdir -p "$OUT"
+          cp hanma-combo-caller-v4/app/build/outputs/apk/debug/app-debug.apk "$OUT/HanmaComboCaller-v4.2-COMPLETE.apk"
+
+          APK="$OUT/HanmaComboCaller-v4.2-COMPLETE.apk"
+          sha256sum "$APK" | tee "$OUT/SHA256.txt"
+
+          {
+            echo "=== APK SIGNATURE ==="
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+            echo
+            echo "=== APK BADGING ==="
+            "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -n 12
+            echo
+            echo "=== REQUIRED ASSETS ==="
+            unzip -l "$APK" | grep -E 'assets/(index.html|app.js|missing_combat_vault.js|compiled_vault.json|recovered_content.js|legacy_combos.js)'
+          } | tee "$OUT/APK_VERIFY.txt"
+
+          grep -q "package: name='com.hanmaclan.combatengine'" "$OUT/APK_VERIFY.txt"
+
+          (
+            cd hanma-combo-caller-v4
+            zip -qr build-output/HANMA_COMBO_CALLER_V4.2_COMPLETE_SOURCE.zip .               -x 'app/build/*' '.gradle/*' 'build-output/*.apk' 'build-output/*.zip' 'build-output/*.b64'
+          )
+
+          sha256sum "$OUT/HANMA_COMBO_CALLER_V4.2_COMPLETE_SOURCE.zip" >> "$OUT/SHA256.txt"
+
+          base64 -w0 "$APK" > "$OUT/HanmaComboCaller-v4.2-COMPLETE.apk.b64"
+          base64 -w0 "$OUT/HANMA_COMBO_CALLER_V4.2_COMPLETE_SOURCE.zip" > "$OUT/HANMA_COMBO_CALLER_V4.2_COMPLETE_SOURCE.zip.b64"
+
+      - name: Upload finished APK and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: HANMA-Combo-Caller-v4.2-COMPLETE
+          path: |
+            hanma-combo-caller-v4/build-output/HanmaComboCaller-v4.2-COMPLETE.apk
+            hanma-combo-caller-v4/build-output/HANMA_COMBO_CALLER_V4.2_COMPLETE_SOURCE.zip
+            hanma-combo-caller-v4/build-output/SHA256.txt
+            hanma-combo-caller-v4/build-output/APK_VERIFY.txt
+          retention-days: 30
+
+      - name: Publish retrievable build bytes to branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "HANMA Builder"
+          git config user.email "actions@github.com"
+          git add -f             hanma-combo-caller-v4/build-output/HanmaComboCaller-v4.2-COMPLETE.apk.b64             hanma-combo-caller-v4/build-output/HANMA_COMBO_CALLER_V4.2_COMPLETE_SOURCE.zip.b64             hanma-combo-caller-v4/build-output/SHA256.txt             hanma-combo-caller-v4/build-output/APK_VERIFY.txt
+          git commit -m "Publish HANMA Combo Caller v4.2 APK [skip ci]" || exit 0
+          git push origin HEAD:hanma-combo-caller-v4-build
