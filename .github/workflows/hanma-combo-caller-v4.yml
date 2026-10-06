@@ -82,7 +82,7 @@ jobs:
           import json
           p='hanma-combo-caller-v4/app/src/main/assets/compiled_vault.json'
           d=json.load(open(p))
-          c=d['metadata']['counts']
+          c=d['counts']
           assert c['callableCues'] == 1189, c
           assert c['banks'] == 85, c
           assert c['presets'] == 38, c
